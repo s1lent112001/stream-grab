@@ -215,6 +215,40 @@ release 1.0.0). Next: the store upload, then step 4.
 - **Settings in sections** (for example Downloads, Subtitles, Detection, Appearance), before v1.3.0
   adds recording settings. Uses the existing design system.
 
+Decided 2026-11-23:
+
+- **Cautious filter**: a missed ad is better than a hidden video. A video is hidden when it comes
+  from a known ad host, or when it is short (about 10–15 s) **and** has one more weak signal (a
+  path word such as `thumb`, `preview`, `sprite`, `hover`, `ad`; a file under about 1 MB; under
+  about 240p). A path word alone never hides a video. Never hidden: live streams, the page's only
+  video, a video of a minute or more (its own length, else its `<video>` element's). Refined in
+  Phase 1: an ad host hides even a long video (an ad can play in the page's own `<video>` element
+  and report that video's length); the `<video>` element's length counts only when the stream does
+  not know its own; `ad` / `ads` count only as a separate path word, not inside an id.
+- **Marked, not dropped**: the stream keeps a `hidden` reason; the badge and "Select all" count
+  only visible videos. Videos still being inspected that already match a host or path rule are
+  hidden from the start, so they do not appear and then vanish.
+- **Two switches**: a setting "Hide ads and previews" (Settings → Detection, on by default), and a
+  "N hidden · Show" line in the popup that shows them until the popup closes.
+- **Duration of MP4 / WebM files** read from the first bytes the file inspector already fetches
+  (`mvhd` of a faststart MP4, `Info/Duration` of WebM); no extra request. Without it the
+  "short" rule could not catch hover previews, which are mostly MP4.
+- **Settings sections**: Downloads (segment requests, simultaneous downloads, resolution, output
+  format, subfolder, remove finished tasks), Subtitles (languages, where they go, file format),
+  Detection (detect automatically, hide ads and previews), Appearance (theme). Headings on one
+  scrolling page, no tabs or accordions; element ids unchanged; Reset stays at the bottom.
+
+Phases (one session each, checks and e2e at the end of each):
+
+1. `core/detection/junk-filter.ts` (pure rules), the `hidden` field, MP4 / WebM duration in the
+   file inspector; unit tests with sample URLs and file heads. **Done 2026-11-23**
+   (`core/detection/media-head.ts` also reads the picture size).
+2. Wiring: detection manager, badge, the setting, the popup "Show hidden" line, selection;
+   e2e fixtures for an ad and a hover preview.
+3. Settings in sections, checked in the real popup in Chrome.
+4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
+   line for "Show hidden".
+
 **v1.2.0: video previews.** A picture for each detected video instead of the static icon, in this
 order: (C) the `poster` of the page's `<video>`; (A) a frame of an MP4 / WebM file, read by a hidden
 video element in the offscreen document (with the page's Referer); (B) a frame of the first HLS / DASH

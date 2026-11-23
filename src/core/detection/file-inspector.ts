@@ -5,6 +5,7 @@ import { errorMessage } from '@/shared/utils/errors';
 import { redactText } from '@/shared/utils/redact';
 import { fileNameOf } from '@/shared/utils/url';
 import { mimeEssence } from './manifest-detector';
+import { readMediaHead } from './media-head';
 import type { InspectionOutcome } from './stream-inspector';
 
 /**
@@ -24,7 +25,9 @@ import type { InspectionOutcome } from './stream-inspector';
  *
  * The same request reports the size (Content-Range total, or Content-Length
  * of a 200), whether the server serves byte ranges (206), the server's file
- * name and the URL after redirects: what downloading needs later. The page's
+ * name and the URL after redirects: what downloading needs later. Since 1.1.0
+ * the same bytes also give the duration and picture size when the file's
+ * header comes first (core/detection/media-head.ts), for the junk filter. The page's
  * Referer/Origin are applied like for manifests (DNR session rule); cookies
  * are the browser's own. At most FILE_SNIFF_BYTES are read; the rest of the
  * body is never transferred (the reader is cancelled).
@@ -277,6 +280,7 @@ export async function inspectProgressiveFile(
     const fileName =
       contentDispositionFileName(response.headers.get('content-disposition')) ?? cleanFileName(fileNameOf(finalUrl) || fileNameOf(url));
     if (fileName !== undefined) info.fileName = fileName;
+    Object.assign(info, readMediaHead(prefix, sniff.container));
     return { kind: 'progressive', info, finalUrl };
   } catch (error) {
     if (timedOut) return { kind: 'failed', reason: describeFetchFailure({ kind: 'timeout' }) };

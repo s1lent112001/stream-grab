@@ -165,7 +165,7 @@ describe('header helpers', () => {
 });
 
 describe('inspectProgressiveFile', () => {
-  it('reads only the first bytes of a ranged file and reports its size, type and name', async () => {
+  it('reads only the first bytes of a ranged file and reports its size, type, name, length and picture', async () => {
     const big = padded(files.mp4FastStart, 8 * 1024 * 1024);
     const server = serve({ body: big, ranges: true, headers: { 'content-type': 'video/mp4' } });
     const release = vi.fn(() => Promise.resolve());
@@ -177,7 +177,16 @@ describe('inspectProgressiveFile', () => {
     expect(outcome).toEqual({
       kind: 'progressive',
       finalUrl: URL_MP4,
-      info: { container: 'mp4', mimeType: 'video/mp4', bytes: big.length, acceptsRanges: true, fileName: 'Big Buck Bunny.mp4' },
+      info: {
+        container: 'mp4',
+        mimeType: 'video/mp4',
+        bytes: big.length,
+        acceptsRanges: true,
+        fileName: 'Big Buck Bunny.mp4',
+        durationSec: 2,
+        width: 160,
+        height: 90,
+      },
     });
     expect(new Headers(server.requests[0]?.init.headers).get('range')).toBe(`bytes=0-${FILE_SNIFF_BYTES - 1}`);
     expect(server.requests[0]?.init).toMatchObject({ credentials: 'include', redirect: 'follow' });
@@ -190,7 +199,7 @@ describe('inspectProgressiveFile', () => {
     const big = padded(files.webm, 6 * 1024 * 1024);
     const server = serve({ body: big, headers: { 'content-type': 'video/webm' } });
     const outcome = await inspectProgressiveFile({ fetch: server.fetch }, 'https://cdn.example/a/clip.webm', {});
-    expect(outcome).toMatchObject({ kind: 'progressive', info: { container: 'webm', bytes: big.length, acceptsRanges: false } });
+    expect(outcome).toMatchObject({ kind: 'progressive', info: { container: 'webm', bytes: big.length, acceptsRanges: false, durationSec: 2.008, height: 90 } });
     expect(server.sent()).toBeLessThan(FILE_SNIFF_BYTES + 3 * 16 * 1024);
   });
 
@@ -214,7 +223,7 @@ describe('inspectProgressiveFile', () => {
     const server = serve({ body: files.mp4, length: false });
     expect(await inspectProgressiveFile({ fetch: server.fetch }, URL_MP4, {})).toMatchObject({
       kind: 'progressive',
-      info: { bytes: files.mp4.length },
+      info: { bytes: files.mp4.length, durationSec: 2 },
     });
   });
 

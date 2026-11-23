@@ -28,6 +28,14 @@ export interface ProgressiveInfo {
   acceptsRanges?: boolean;
   /** Name the server suggests (Content-Disposition) or the last path segment of the URL. */
   fileName?: string;
+  /**
+   * Seconds, read from the file's first bytes (1.1.0): an MP4's `mvhd` when its index comes first
+   * (faststart), a WebM's Info/Duration. Absent when the first bytes do not say.
+   */
+  durationSec?: number;
+  /** Picture size of the video track, read from the same first bytes (MP4 `tkhd`, WebM Video element). */
+  width?: number;
+  height?: number;
 }
 
 /**
@@ -150,6 +158,16 @@ export interface MediaSummary {
   subtitleTracks?: SubtitleTrackSummary[];
 }
 
+/**
+ * Why the junk filter (1.1.0, core/detection/junk-filter.ts) hides a stream:
+ * - `ad-host`:      served by a known video ad host
+ * - `short-clip`:   short, with another sign of a preview or ad (path word, small file, low resolution)
+ * - `preview-path`: still being inspected, and its path names a thumbnail, preview, sprite or ad;
+ *                   decided again once the inspection says how long it is
+ */
+export const HIDDEN_REASONS = ['ad-host', 'short-clip', 'preview-path'] as const;
+export type HiddenReason = (typeof HIDDEN_REASONS)[number];
+
 export interface DetectedStream {
   /** Stable within a tab: derived from `dedupeKey`. */
   id: string;
@@ -183,6 +201,8 @@ export interface DetectedStream {
   title?: string;
   /** Duration of the frame's only <video> element, when unambiguous. Seconds. */
   durationHint?: number;
+  /** Set when the junk filter hides this stream from the list, the badge and "Select all" (1.1.0). */
+  hidden?: HiddenReason;
   requestContext: RequestContext;
   firstSeen: number;
   lastSeen: number;

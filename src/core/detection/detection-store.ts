@@ -4,6 +4,7 @@ import {
   DETECTION_STATUSES,
   DRM_SYSTEMS,
   ENCRYPTION_KINDS,
+  HIDDEN_REASONS,
   MANIFEST_ROLES,
   MEDIA_PROTOCOLS,
   PROGRESSIVE_CONTAINERS,
@@ -175,6 +176,12 @@ export function parseProgressiveInfo(raw: unknown): ProgressiveInfo | undefined 
   if (typeof raw['acceptsRanges'] === 'boolean') info.acceptsRanges = raw['acceptsRanges'];
   const fileName = optionalString(raw['fileName']);
   if (fileName !== undefined && fileName.length <= 255) info.fileName = fileName;
+  const durationSec = finiteNumber(raw['durationSec']);
+  if (durationSec !== undefined && durationSec > 0) info.durationSec = durationSec;
+  for (const key of ['width', 'height'] as const) {
+    const value = finiteNumber(raw[key]);
+    if (value !== undefined && value > 0 && Number.isInteger(value)) info[key] = value;
+  }
   return info;
 }
 
@@ -245,6 +252,7 @@ export function parseDetectedStream(raw: unknown): DetectedStream | null {
   if (durationHint !== undefined && durationHint > 0) stream.durationHint = durationHint;
   const inspectedAt = finiteNumber(raw['inspectedAt']);
   if (inspectedAt !== undefined) stream.inspectedAt = inspectedAt;
+  if (isOneOf(raw['hidden'], HIDDEN_REASONS)) stream.hidden = raw['hidden'];
   const manifest = parseManifestSummary(raw['manifest']);
   if (manifest) stream.manifest = manifest;
   const media = parseMediaSummary(raw['media']);

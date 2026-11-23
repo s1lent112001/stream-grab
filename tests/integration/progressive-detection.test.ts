@@ -203,7 +203,18 @@ describe('progressive detection on the fixture site', () => {
       progressive: { container: 'mp4', mimeType: 'video/mp4', bytes: files.mp4FastStart.length, acceptsRanges: true, fileName: 'sample.mp4' },
       media: { variants: [{ id: 'file' }], audioTracks: [] },
     });
-    expect(webm?.progressive).toEqual({ container: 'webm', mimeType: 'video/webm', bytes: files.webm.length, acceptsRanges: true, fileName: 'sample.webm' });
+    // The file's own header gives its length and picture size (1.1.0).
+    expect(webm?.progressive).toEqual({
+      container: 'webm',
+      mimeType: 'video/webm',
+      bytes: files.webm.length,
+      acceptsRanges: true,
+      fileName: 'sample.webm',
+      durationSec: 2.008,
+      width: 160,
+      height: 90,
+    });
+    expect(mp4?.progressive).toMatchObject({ durationSec: 2, width: 160, height: 90 });
     expect(protectedMp4?.progressive).toMatchObject({ bytes: files.mp4.length });
     // The redirect target is the same video: one entry, under the page's link.
     expect(redirected).toMatchObject({ childKeys: [`${ORIGIN}${REDIRECT_TARGET_PATH}`], progressive: { bytes: files.mp4Fragmented.length } });

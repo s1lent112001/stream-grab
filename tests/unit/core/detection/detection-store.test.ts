@@ -55,16 +55,36 @@ describe('parseStoredTabDetections', () => {
       streams: [
         {
           ...file,
-          progressive: { container: 'webm', mimeType: 'video/webm', bytes: 52_428_800, acceptsRanges: true, fileName: 'clip.webm', junk: 1 },
+          hidden: 'short-clip',
+          progressive: {
+            container: 'webm',
+            mimeType: 'video/webm',
+            bytes: 52_428_800,
+            acceptsRanges: true,
+            fileName: 'clip.webm',
+            durationSec: 12.5,
+            width: 640,
+            height: 360,
+            junk: 1,
+          },
         },
-        { ...file, id: 'p2', progressive: { container: 'mp4', bytes: -5, acceptsRanges: 'yes', mimeType: 42 } },
+        {
+          ...file,
+          id: 'p2',
+          hidden: 'spam',
+          progressive: { container: 'mp4', bytes: -5, acceptsRanges: 'yes', mimeType: 42, durationSec: 0, width: 1.5, height: '360' },
+        },
         { ...file, id: 'p3', progressive: { container: 'mkv' } },
         { ...file, id: 'p4' },
       ],
     });
-    expect(parsed?.streams.map((entry) => [entry.id, entry.progressive])).toEqual([
-      ['p1', { container: 'webm', mimeType: 'video/webm', bytes: 52_428_800, acceptsRanges: true, fileName: 'clip.webm' }],
-      ['p2', { container: 'mp4' }],
+    expect(parsed?.streams.map((entry) => [entry.id, entry.hidden, entry.progressive])).toEqual([
+      [
+        'p1',
+        'short-clip',
+        { container: 'webm', mimeType: 'video/webm', bytes: 52_428_800, acceptsRanges: true, fileName: 'clip.webm', durationSec: 12.5, width: 640, height: 360 },
+      ],
+      ['p2', undefined, { container: 'mp4' }],
     ]);
     // HLS/DASH streams are unchanged and carry no progressive details.
     expect(parseStoredTabDetections(record)?.streams[0]).toEqual(stream);
