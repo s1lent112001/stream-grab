@@ -1330,6 +1330,70 @@ Files are saved by the service worker (`subtitle-saves.ts`) after the video has 
 order, never a forced one (`languageKey` maps ISO 639-2/B codes to /T, `pt-BR` takes `pt-BR` or
 `pt`). A changed quality keeps the picks the new variant also offers.
 
+## Version 1.2.0
+
+### Preview spike (Phase 1)
+
+Measured 2026-11-23 in Chrome for Testing 157 (H.264 / AAC media) and 116 (WebM VP8 / Opus:
+Chrome for Testing 116 is built without H.264 and AAC; branded Chrome 116 has them). Harness:
+`.cache/spike/preview-spike.mjs` (not in git); a 60 s, 640×360, 2.9 Mbit/s clip; pages and files
+on two origins; a server throttled to 4 Mbit/s for the byte counts.
+
+**The page's player, drawn by the content script.** The canvas follows the page's rules; host
+permissions do not unlock it in the isolated world:
+
+| `<video>` source | Canvas |
+| --- | --- |
+| File from the page's own site | Readable |
+| File from another site, no `crossorigin` (even when the server sends `Access-Control-Allow-Origin`) | Locked (`SecurityError` on `getImageData` / `toBlob`) |
+| File from another site with `crossorigin="anonymous"` and CORS | Readable |
+| MSE player (`blob:`), segments from the same or another site | Readable |
+| Video in a frame from another site | Readable by that frame's content script (`all_frames`) |
+| Paused after loading (`preload="auto"`) | Readable (shows the loaded frame) |
+| `preload="none"` with a `poster`, not played | `readyState` 0: no picture; `poster` is there |
+
+A 104 × 104 WebP from the canvas is 1.4–1.7 KB (data URL about 2.3 KB), small enough for a
+runtime message. So step 2 covers HLS / DASH players (MSE) and same-site files; files from a CDN
+on another domain go to step 3.
+
+**The offscreen document's hidden `<video>`** (extension origin, host permissions) is never
+locked: with or without `crossorigin`, with or without CORS headers from the server. It needs no
+`crossorigin` attribute. Its requests have resource type `media`: the request-context rule with
+only `xmlhttprequest` leaves them without Referer; with `media` added every range request carries
+the page's Referer (116 and 157). An Origin set by the rule is sent too.
+
+**A frame at 10% of a file** (`preload="metadata"`, seek to `min(10% of length, 60 s)`, wait for
+`seeked`, draw on an `OffscreenCanvas`, `convertToBlob` WebP). Removing `src` after the frame stops
+the download (no more bytes are sent).
+
+| File | Requests | Bytes until the frame | Time at 4 Mbit/s |
+| --- | --- | --- | --- |
+| MP4, index (`moov`) at the end, 21.6 MB | start, end (`moov`), 10% point | ~640 KB | ~1.0 s |
+| MP4 with `+faststart` | start, 10% point | ~460 KB | ~0.7 s |
+| WebM (Cues at the end), 1.6 MB | start, Cues, 10% point | ~290 KB | ~0.5 s |
+| MP4, server without ranges (200) | one whole-file request | no metadata after 10 MB, timeout | — |
+
+So a file frame is made only when the inspector saw range support (`acceptsRanges === true`), with
+a timeout of a few seconds.
+
+**A frame from fMP4 segments with MSE** (init segment + the segment at 10%, `addSourceBuffer`,
+append both, seek to `buffered.start(0)`, draw): works for HLS fMP4 with muxed audio and video and
+for a DASH video-only rendition (no audio needed); about 2 KB of init plus one segment.
+`addSourceBuffer` needs a codecs string (`video/mp4` alone is unsupported in 116 and 157), and it
+must name every track in the segment and the right codec family (a muxed segment given only
+`avc1`, or VP8 given as `vp9`, fails on append); a wrong H.264 profile / level is accepted. The codecs come from
+the HLS `CODECS` attribute or DASH `@codecs`, else from the init segment's sample entries.
+
+**Page pictures**: a 1280 × 720 JPEG fetched in the offscreen document and shrunk to 104 × 104
+WebP (`createImageBitmap` + `OffscreenCanvas`): 1.4 KB, 30–60 ms.
+
+**Cache**: a WebP Blob put in IndexedDB by the offscreen document is read by the service worker
+and by the popup (`URL.createObjectURL` in an `<img>`, allowed by the extension CSP) in 3–5 ms.
+
+Testing notes: Puppeteer cannot evaluate in Chrome 116's service worker (calls never return), so
+the harness drives an extension page; e2e fixtures for previews on Chrome 116 need WebM media, as
+Chrome for Testing 116 cannot decode the H.264 fixtures.
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

@@ -20,7 +20,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | UI redesign: a simpler popup with fewer tabs, for every feature up to v1.3.0 (below) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
-| Later | fMP4 `wvtt` subtitles (deferred from 0.7.0, again on 2026-11-23); no version yet |
+| Later | fMP4 `wvtt` subtitles (deferred from 0.7.0, again on 2026-11-23); previews of HLS streams with MPEG-TS segments through FFmpeg (left out of 1.2.0); no version yet |
 
 Not planned: DRM, SAMPLE-AES, live download of segments (v1.3.0 records the tab instead), an "always ask where to save" setting (Chrome's own
 setting does it), an Open file button (needs `downloads.open`), an FFmpeg upgrade, Edge and Firefox
@@ -259,62 +259,77 @@ Phases (one session each, checks and e2e at the end of each):
 4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
    line for "Show hidden". **Done 2026-11-23** (GitHub only; no store upload until v1.5.0).
 
-**v1.2.0: video previews.** A picture for each detected video instead of the static icon, in this
-order: (C) the `poster` of the page's `<video>`; (A) a frame of an MP4 / WebM file, read by a hidden
-video element in the offscreen document (with the page's Referer); (B) a frame of the first HLS / DASH
-video segment (with its init segment for fMP4); (C) a picture the page declares for the video (not
-a plain `og:image`, see below); then the static icon. Previews are made lazily (popup open, item
-visible) and cached; none for DRM.
+**v1.2.0: video previews.** A picture for each detected video instead of the static icon. Previews
+are made lazily (popup open, row visible) and cached; none for DRM. No new permission and no new
+install warning: everything uses the content script, host permissions, the offscreen document and
+the header rules StreamGrab already has.
 
-Decided 2026-11-23:
+Decided 2026-11-23 (the "middle" option: no FFmpeg for previews, chosen for performance):
 
-- **Order**: `poster` of the stream's `<video>` → a frame of an MP4 / WebM file → a frame of an
-  HLS / DASH segment → the video's picture declared by the page → the static icon. The `poster`
-  counts only when the `<video>` is known to play this stream: it points at it (`src`), or it is
-  the frame's only `<video>` (the rule `durationHint` already uses).
-- **No plain `og:image`**: it usually pictures the page (article cover, logo), not the video. The
-  last step uses only a picture the page gives for the video itself: `thumbnailUrl` of a
-  schema.org `VideoObject` (when the page has one `VideoObject`, or its name matches the video's
-  title), else `og:image` when `og:type` is `video.*` and the page has exactly one video.
-- **Frame at about 10% of the length** (at most about 60 s in), not the first frame, which is
-  often black or an intro. HLS / DASH: one segment of the **lowest** quality (little data);
-  AES-128 HLS is decrypted as for downloads; SAMPLE-AES, CENC and DRM get no preview. Live
-  streams: none.
+- **Order**, cheapest first:
+  1. the `poster` of the stream's `<video>`;
+  2. the frame the page's own player shows now, drawn by the content script on a canvas (no
+     request, no decoding; only when the `<video>` has a picture, and not when the canvas is
+     locked: DRM, a file from another site without CORS);
+  3. a frame at about 10% of the length, made in the offscreen document: an MP4 / WebM file in a
+     hidden video element; an HLS / DASH stream whose segments are fMP4 / CMAF: its init segment
+     and one segment fed to the hidden video element with Media Source Extensions;
+  4. the video's picture declared by the page;
+  5. the static icon.
+
+  Steps 1 and 2 count only when the `<video>` is known to play this stream: it points at it
+  (`src`), or it is the frame's only `<video>` (the rule `durationHint` already uses).
+- **No FFmpeg for previews.** HLS with MPEG-TS segments (Chrome's MSE cannot read them) gets steps
+  1, 2 and 4 only. A TS frame through FFmpeg would load a second 32 MB core next to a merge (memory,
+  CPU, seconds of waiting); it moves to Later, done only if many rows keep the icon.
+- **No plain `og:image`**: it usually pictures the page (article cover, logo), not the video. Step 4
+  uses only a picture the page gives for the video itself: `thumbnailUrl` of a schema.org
+  `VideoObject` (when the page has one `VideoObject`, or its name matches the video's title), else
+  `og:image` when `og:type` is `video.*` and the page has exactly one video.
+- **Frame at about 10% of the length** (at most about 60 s in), not the first frame, which is often
+  black or an intro. HLS / DASH: one segment of the **lowest** quality (little data); AES-128 HLS
+  is decrypted as for downloads; SAMPLE-AES, CENC and DRM get no made frame. Live streams: none.
 - **Everywhere a row has a tile**: Detected, Queue and Completed. The picture goes inside the
   existing 52 px tile; the duration label, the lock / warning / tick overlays and the grab
   animation stay. The v1.4.0 redesign decides the final look.
 - **No setting**: previews are always on. PRIVACY.md (local) gets a line: opening the popup may
-  fetch a picture or a small part of a video from the page's own site.
+  fetch a picture or a small part of a video from the page's own site. The offscreen document's
+  `justification` mentions previews.
 - **Pictures from the page are untrusted**: http(s) URLs only, bounded length, `data:`
   placeholders ignored. The offscreen document fetches them with the page's Referer and shrinks
   them (about 104 × 104, WebP or JPEG, a few KB); the popup never loads a page's image URL itself.
+  A frame from the content script is shrunk there and checked (type, size) by the service worker.
 - **Cache** in the extension's IndexedDB, keyed by the stream's dedupe key, oldest dropped past
   about 300; failures are cached too, so a video without a preview is not tried on every popup
-  open. Kept while a task in Queue or Completed still uses it.
+  open; a cached failure is tried again when a later popup open finds the page's player has a
+  picture. Kept while a task in Queue or Completed still uses it.
 - **Request context**: the page's Referer must also reach the hidden video element's requests
   (resource type `media`, today only `xmlhttprequest`); a preview takes its own short lease with
   a timeout and is skipped rather than waiting long behind a download's lease on the same host.
-- **Decoding HLS / DASH** (settled by the Phase 1 spike): fMP4 / CMAF segments through Media
-  Source Extensions in the hidden video element (fast, no FFmpeg); MPEG-TS segments (Chrome's MSE
-  cannot read them) through FFmpeg with one output frame, never queued behind a merge (its own
-  instance, or skipped while a merge runs).
+  At most two previews are made at a time; they stop when the popup closes.
 
 Phases (one session each, checks and e2e at the end of each):
 
-1. Spike in Chrome 116 and the newest Chrome: Referer on the hidden video's `media` requests; a
-   frame at 10% of an MP4 whose index is at the end (range requests); MSE with an init segment and
-   one fMP4 segment; one frame of an MPEG-TS segment with FFmpeg (time, memory, a PNG / JPEG
-   encoder in the bundled core, running beside a merge); the popup reading a cached picture from
-   IndexedDB. Ends with the decoding route for HLS / DASH.
-2. Core: the source-order rules (pure), the content script reading `poster`, `VideoObject`
-   `thumbnailUrl`, `og:type` and `og:image` (parsed and bounded in the service worker), the
-   preview cache with failures; unit tests.
-3. Preview makers in the offscreen document: page pictures, a file frame, a segment frame; at most
-   two at a time, timeouts, cancelled when the popup closes; the preview lease.
-4. Popup: previews made when a row becomes visible, the tile showing the picture in Detected, Queue
-   and Completed; e2e fixtures (poster, MP4, HLS TS, HLS fMP4, DASH, `VideoObject`, a video page's
-   `og:image`, an article's `og:image` that is not used).
-5. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
+1. Spike in Chrome 116 and the newest Chrome: drawing the page's `<video>` on a canvas from the
+   content script (an MSE player, a file from another site with and without CORS, a video in an
+   iframe); Referer on the hidden video's `media` requests; a frame at 10% of an MP4 whose index is
+   at the end (range requests); MSE with an init segment and one fMP4 segment (HLS fMP4, DASH with
+   separate audio); the popup reading a cached picture from IndexedDB. **Done 2026-11-23**:
+   results in ARCHITECTURE.md "Version 1.2.0". Findings for Phases 2–3: the page's frame works for
+   MSE players and same-site files (a file from another site without CORS is locked, so it goes to
+   step 3); the hidden video needs no `crossorigin` and is never locked; the rule must add
+   `media`; a file frame only when the server takes ranges (else Chrome reads the whole file);
+   MSE needs a codecs string naming every track in the segment.
+2. Core: the source-order rules (pure); the content script reading `poster`, `VideoObject`
+   `thumbnailUrl`, `og:type` and `og:image` and drawing the player's frame (all parsed and bounded
+   in the service worker); the preview cache with failures; unit tests.
+3. Preview makers in the offscreen document (page pictures, a file frame, an fMP4 segment frame,
+   the preview lease, timeouts, cancelling) and the popup (previews asked when a row becomes
+   visible, the tile showing the picture in Detected, Queue and Completed); e2e fixtures (poster,
+   a playing MSE player, MP4, HLS fMP4, DASH, HLS TS without a picture, `VideoObject`, a video
+   page's `og:image`, an article's `og:image` that is not used). Split into two sessions if it
+   grows past about 80 tool calls.
+4. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
    draft line (GitHub only; no store upload until v1.5.0).
 
 **v1.3.0: tab recording.** "Record this tab" saves what the tab plays, for live streams and for
