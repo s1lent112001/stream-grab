@@ -20,7 +20,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.2.1 | Fix: after Back/Forward, on single-page sites and on sites whose service worker loads their pages, the list showed videos of other pages. Released 2026-11-24 |
 | v1.2.2 | Junk filter hides a page's grid of previews (no length threshold); hidden videos in a folded section after the list. Released 2026-11-24 |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
-| v1.4.0 | UI redesign: a simpler popup with fewer tabs, for every feature up to v1.3.0 (below) |
+| v1.4.0 | Optimisation and bug fixes, no new feature (below); replaces the UI redesign (dropped 2026-11-24) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
 | Later | fMP4 `wvtt` subtitles (deferred from 0.7.0, again on 2026-11-23); previews of HLS streams with MPEG-TS segments through FFmpeg (left out of 1.2.0); no version yet |
 
@@ -171,10 +171,11 @@ A first review often asks for changes (permission wording, policy); fixing them 
 
 One version at a time, each in user-approved phases (one session per phase, checks and e2e at the
 end of each phase). v1.1.0 to v1.4.0 are released on GitHub only (tag, CHANGELOG, ZIP); after
-v1.0.0 the store gets its next update with v1.5.0 (decided 2026-11-23, moved from v1.4.0 when the UI
-redesign was added), which carries every feature of v1.1.0 to v1.5.0 in one review. Fixes for
-serious bugs that store users report still go to the store as patch releases in between. Only
-v1.3.0 adds a permission (`tabCapture`), so the v1.5.0 review is the first one to see it.
+v1.0.0 the store gets its next update with v1.5.0 (decided 2026-11-23, moved from v1.4.0 when a UI
+redesign was planned there; the redesign was dropped on 2026-11-24), which carries every feature of
+v1.1.0 to v1.5.0 in one review. Fixes for serious bugs that store users report still go to the
+store as patch releases in between. Only v1.3.0 adds a permission (`tabCapture`), so the v1.5.0
+review is the first one to see it.
 
 **Store listing.** The store search reads only the name, summary and description. Each version's
 release step updates the local listing draft for what it adds, in everyday words first and
@@ -189,7 +190,7 @@ so the listing never promises a feature the store version lacks.
 | v1.1.0 | Same | Same | Draft: "Show hidden" junk filter line |
 | v1.2.0 | Same | Same | Draft: a line on video previews (not a search term) |
 | v1.3.0 | Draft: **StreamGrab - Video Downloader & Recorder** | Draft: add "record" and "live streams" | Draft: a section on tab recording (what it saves, WebM, tab must stay open); remove "Live streams are not listed"; justification for `tabCapture` |
-| v1.4.0 | Same | Same | Draft: new screenshots and promo tiles of the redesigned popup |
+| v1.4.0 | Same | Same | Same (no feature change) |
 | v1.5.0 (store) | The part after "StreamGrab" translated | Translated | Whole listing translated, with every feature up to v1.5.0 |
 
 **v1.0.0: new repository and store search.** No feature change. In this order:
@@ -299,7 +300,7 @@ Decided 2026-11-23 (the "middle" option: no FFmpeg for previews, chosen for perf
   is decrypted as for downloads; SAMPLE-AES, CENC and DRM get no made frame. Live streams: none.
 - **Everywhere a row has a tile**: Detected, Queue and Completed. The picture goes inside the
   existing 52 px tile; the duration label, the lock / warning / tick overlays and the grab
-  animation stay. The v1.4.0 redesign decides the final look.
+  animation stay.
 - **No setting**: previews are always on. PRIVACY.md (local) gets a line: opening the popup may
   fetch a picture or a small part of a video from the page's own site. The offscreen document's
   `justification` mentions previews.
@@ -360,13 +361,39 @@ does a captured tab keep playing when its window is covered by other windows for
 warning (a new warning disables the extension for current users until they accept it). The store
 description and permission justifications change with it.
 
-**v1.4.0: UI redesign.** The popup's four tabs (Detected, Queue, Completed, Settings) plus the
-About page feel heavy. After previews (v1.2.0) and tab recording (v1.3.0), the whole popup is
-designed again for every feature, with fewer places to look (for example Queue and Completed as
-one Downloads list, Settings behind a button instead of a tab). Phase 1 presents a few directions
-(using the UI design skills and the existing design system) and the user picks one before any code
-changes. It comes before translations so the UI text, the screenshots and the store listing are
-made once, on the final UI.
+**v1.4.0: optimisation and bug fixes** (decided 2026-11-24). The UI redesign planned here was
+dropped: the popup keeps its tabs. No new feature and no new permission. It comes after v1.3.0, so
+tab recording is measured and fixed with the rest. The list comes from a read-only audit of the code
+on 2026-11-24; each item is checked again (and its impact measured where it can be) in its phase.
+
+- **Phase 1: bugs.** Video checks wait without a time limit for another context's Referer rule on
+  the same host (`request-context.ts` `acquire`), so a running download can hold back detection on
+  that site, and three such waits stop detection in every tab; navigation race: the tab generation
+  is read after an `await` in `#handleCandidate`, so a video of the old page can join the new list;
+  Queue count stuck when the user leaves Detected while a grab is starting; Settings sliders write
+  on every step and can jump back; a quick Retry can leave a task in "downloading"; two callers can
+  race to create the offscreen document. Smaller: empty subtitle segments are retried for about
+  11 s each; on 429/503 only one worker backs off, so the task can fail; merges of very long
+  streams whose timestamps reset at each segment pass FFmpeg's 8192-input cap and fail again on
+  Retry.
+- **Phase 2: progress, storage and merge.** Every progress report reads and parses the whole task
+  list (up to 500 tasks) in the service worker, and the popup parses it again and re-renders the
+  whole tree: keep the list in memory in the worker, write only active tasks to `taskProgress`,
+  keep unchanged task objects in the popup and memoise rows; the one-second clock only in running
+  rows. Merge preparation reads every segment's head two or three times, one at a time: prepare
+  once and read in parallel. Saving a finished file holds the merge slot, so FFmpeg unloads and
+  the next task loads the 32 MB core again. Parts are copied twice before IndexedDB; segments are
+  grouped by track in O(n²).
+- **Phase 3: detection, storage writes and the back/forward cache.** Do the cheap checks before
+  `chrome.tabs.get`; the content script scans again only when a mutation touches a video, source
+  or track element; child playlists go through the manifest cache (2–4 fewer fetches per HLS
+  video); the tab record is not rewritten every 2 s when only the URL changed, and remembered pages
+  get their own key; `findStreams` does not load every open tab. The back/forward cache flush by
+  DNR rule updates (every rule change clears it in all tabs) is fixed here: fewer rule changes, a
+  plain fetch first and the Referer rule only when needed, or a rule kept per site visit. Popup:
+  version from the manifest instead of waking the worker, one `downloads.search` for Completed, no
+  "No downloads" flash while settings load. Then the release (checks, e2e on the newest Chrome and
+  Chrome 116, CHANGELOG, ZIP, GitHub Release).
 
 **v1.5.0: translations and rating prompt** (the next store update).
 
