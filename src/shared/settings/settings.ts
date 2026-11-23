@@ -52,6 +52,11 @@ export interface Settings {
   subtitleLanguages: string;
   /** Observe network traffic for supported media streams (every registered protocol). */
   autoDetect: boolean;
+  /**
+   * Hide ads, thumbnails and hover previews from the list and the badge (1.1.0). They are still
+   * detected and marked; the popup can show them for a while.
+   */
+  hideJunk: boolean;
   /** Drop finished tasks from the queue view automatically (they stay in Completed). */
   autoRemoveCompleted: boolean;
   /** Subfolder of Chrome's download folder files are saved in, e.g. "StreamGrab/Movies"; '' saves in the folder itself. */
@@ -69,6 +74,7 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   subtitleMode: 'file',
   subtitleLanguages: '',
   autoDetect: true,
+  hideJunk: true,
   autoRemoveCompleted: false,
   downloadFolder: '',
   theme: 'system',
@@ -86,7 +92,7 @@ export function clampInt(value: unknown, range: IntRange, fallback: number = ran
  */
 export function normalizeSettings(raw: unknown, fallback: Readonly<Settings> = DEFAULT_SETTINGS): Settings {
   const input = isRecord(raw) ? raw : {};
-  const bool = (key: 'autoDetect' | 'autoRemoveCompleted'): boolean => {
+  const bool = (key: 'autoDetect' | 'hideJunk' | 'autoRemoveCompleted'): boolean => {
     const value = input[key];
     return typeof value === 'boolean' ? value : fallback[key];
   };
@@ -102,6 +108,7 @@ export function normalizeSettings(raw: unknown, fallback: Readonly<Settings> = D
     subtitleLanguages:
       typeof input['subtitleLanguages'] === 'string' ? normalizeSubtitleLanguages(input['subtitleLanguages']) : fallback.subtitleLanguages,
     autoDetect: bool('autoDetect'),
+    hideJunk: bool('hideJunk'),
     autoRemoveCompleted: bool('autoRemoveCompleted'),
     downloadFolder: folder(input['downloadFolder'], fallback.downloadFolder),
     theme: isOneOf(input['theme'], THEMES) ? input['theme'] : fallback.theme,

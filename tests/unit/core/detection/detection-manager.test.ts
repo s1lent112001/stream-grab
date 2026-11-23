@@ -981,3 +981,67 @@ describe('DetectionManager on blocked sites (0.8.0)', () => {
     expect(await manager.getStreams(1)).toHaveLength(1);
   });
 });
+
+describe('DetectionManager: junk filter (1.1.0)', () => {
+  const MOVIE = 'https://media.example.net/v/movie.mp4';
+  const PREVIEW = 'https://media.example.net/previews/movie-hover.mp4';
+  const AD = 'https://s0.2mdn.net/videoplayback/ad-creative.mp4';
+
+  function file(url: string, overrides: Partial<DetectionCandidate> = {}): DetectionCandidate {
+    return candidate(url, { match: { protocol: 'progressive', evidence: 'content-type' }, progressive: { container: 'mp4' }, ...overrides });
+  }
+  function outcome(url: string, info: Partial<ProgressiveInfo>): InspectionOutcome {
+    return { kind: 'progressive', finalUrl: url, info: { container: 'mp4', bytes: 50_000_000, ...info } };
+  }
+
+  it('marks a short preview and an ad, keeps them listed, and stores the file length in media', async () => {
+    const { manager, area } = setup({
+      outcomes: {
+        [MOVIE]: outcome(MOVIE, { durationSec: 1_800, height: 1080 }),
+        [PREVIEW]: outcome(PREVIEW, { durationSec: 6, bytes: 400_000 }),
+        [AD]: outcome(AD, { durationSec: 30 }),
+      },
+    });
+    await manager.handleCandidate(file(MOVIE));
+    await manager.handleCandidate(file(PREVIEW, { timestamp: 1_001 }));
+    await manager.handleCandidate(file(AD, { timestamp: 1_002 }));
+    await manager.idle();
+
+    const streams = await manager.getStreams(1);
+    expect(streams.map((stream) => [new URL(stream.url).pathname, stream.hidden])).toEqual([
+      ['/v/movie.mp4', undefined],
+      ['/previews/movie-hover.mp4', 'short-clip'],
+      ['/videoplayback/ad-creative.mp4', 'ad-host'],
+    ]);
+    expect(streams[0]?.media?.durationSec).toBe(1_800);
+    const stored = area.data.get(detectionStorageKey(1)) as { streams: { hidden?: string }[] };
+    expect(stored.streams.map((stream) => stream.hidden)).toEqual([undefined, 'short-clip', 'ad-host']);
+  });
+
+  it('hides a preview path while it is inspected, and lists it again once it proves long', async () => {
+    const pending = deferred<InspectionOutcome>();
+    const { manager } = setup({ outcomes: { [MOVIE]: outcome(MOVIE, { durationSec: 1_800 }), [PREVIEW]: () => pending.promise } });
+    await manager.handleCandidate(file(MOVIE));
+    await manager.handleCandidate(file(PREVIEW, { timestamp: 1_001 }));
+    expect((await manager.getStreams(1)).map((stream) => stream.hidden)).toEqual([undefined, 'preview-path']);
+
+    pending.resolve(outcome(PREVIEW, { durationSec: 600 }));
+    await manager.idle();
+    expect((await manager.getStreams(1)).map((stream) => stream.hidden)).toEqual([undefined, undefined]);
+  });
+
+  it('never hides the page’s only video, and marks it once a second one appears', async () => {
+    const { manager, badge } = setup({
+      outcomes: { [PREVIEW]: outcome(PREVIEW, { durationSec: 6, bytes: 400_000 }), [MOVIE]: outcome(MOVIE, { durationSec: 1_800 }) },
+    });
+    await manager.handleCandidate(file(PREVIEW));
+    await manager.idle();
+    expect((await manager.getStreams(1))[0]?.hidden).toBeUndefined();
+
+    await manager.handleCandidate(file(MOVIE, { timestamp: 1_001 }));
+    await manager.idle();
+    expect((await manager.getStreams(1)).map((stream) => stream.hidden)).toEqual(['short-clip', undefined]);
+    // The manager reports every stream; the service worker's badge leaves the hidden ones out.
+    expect(badge.get(1)).toBe(2);
+  });
+});

@@ -102,3 +102,20 @@ describe('Settings: subtitles (0.7.0)', () => {
     expect(input.value).toBe('');
   });
 });
+
+describe('Settings: hide ads and previews (1.1.0)', () => {
+  it('is on by default and saves the switch', async () => {
+    const { local } = await installPopupChrome();
+    const view = await render(SettingsPage, {});
+    unmount = () => view.root.unmount();
+    const toggle = view.container.querySelector<HTMLElement>('#hide-junk');
+    if (!toggle) throw new Error('no hide-junk switch');
+    expect(view.container.textContent).toContain('Hide ads and previews');
+    expect(toggle.getAttribute('aria-checked') ?? String((toggle as HTMLInputElement).checked)).toBe('true');
+    await act(async () => {
+      toggle.click();
+      await settle();
+    });
+    expect((local.data.get(STORAGE_KEYS.settings) as { hideJunk?: boolean } | undefined)?.hideJunk).toBe(false);
+  });
+});

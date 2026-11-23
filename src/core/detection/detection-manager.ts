@@ -19,6 +19,7 @@ import { stableHash } from '@/shared/utils/hash';
 import type { Logger } from '@/shared/utils/logger';
 import { dedupeKey, fileNameOf, parseHttpUrl, urlShape } from '@/shared/utils/url';
 import { involvesBlockedSite, isBlockedUrl } from './blocked-sites';
+import { junkMarks } from './junk-filter';
 import type { DetectionStore, StoredTabDetections } from './detection-store';
 import type { ManifestInfo } from './manifest-inspector';
 import type { InspectionKind, InspectionOutcome } from './stream-inspector';
@@ -302,6 +303,7 @@ export class DetectionManager {
 
   async getStreams(tabId: number): Promise<DetectedStream[]> {
     const tab = await this.#tab(tabId);
+    this.#markJunk(tab);
     return this.#visible(tab);
   }
 
@@ -696,6 +698,8 @@ export class DetectionManager {
     stream.inspectedAt = this.#now();
     stream.progressive = info;
     stream.media = { variants: [{ id: PROGRESSIVE_VARIANT_ID, audioOnly: false, audioTrackIds: [] }], audioTracks: [] };
+    // The file header's length (1.1.0): the popup shows it, and it is the file's own, not its frame's.
+    if (info.durationSec !== undefined) stream.media.durationSec = info.durationSec;
     this.#applySubtitles(tab, stream);
     stream.status = 'ready';
     delete stream.statusMessage;
@@ -873,6 +877,21 @@ export class DetectionManager {
     return [...tab.streams.values()].sort((a, b) => a.firstSeen - b.firstSeen);
   }
 
+  /**
+   * Marks the tab's ads and previews (1.1.0, junk-filter.ts). Run before every save, so the mark
+   * follows each change: an inspection result, a page-info length, another video of the page
+   * (the filter never leaves a page with nothing listed, see junkMarks).
+   */
+  #markJunk(tab: TabState): void {
+    const streams = [...tab.streams.values()];
+    junkMarks(streams).forEach((reason, index) => {
+      const stream = streams[index];
+      if (!stream) return;
+      if (reason === undefined) delete stream.hidden;
+      else stream.hidden = reason;
+    });
+  }
+
   // ----------------------------------------------------------- persistence
 
   #markDirty(tab: TabState): void {
@@ -894,6 +913,7 @@ export class DetectionManager {
     const previous = this.#saveChains.get(tab.tabId) ?? Promise.resolve();
     const next = previous.then(async () => {
       if (tab.removed) return;
+      this.#markJunk(tab);
       const streams = this.#visible(tab);
       try {
         if (streams.length === 0 && tab.subtitleFiles.length === 0) {

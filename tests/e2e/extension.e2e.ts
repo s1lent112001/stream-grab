@@ -18,6 +18,11 @@ import { DEMO_MEDIA, SIDECAR_CUE_SHIFT_SEC, SIDECAR_SUBTITLE_PATH } from '@tests
 import { LIVE_PAGE_PATH, LIVE_PATH, LIVE_RELOADS, LIVE_VOD_PATH } from '@tests/fixtures/fixture-routes';
 import { syntheticFiles } from '@tests/fixtures/media/synthetic-files';
 import {
+  JUNK_AD_HOST,
+  JUNK_AD_PATH,
+  JUNK_PAGE_PATH,
+  JUNK_PREVIEW_PATH,
+  JUNK_VIDEO_PATH,
   MSE_SEGMENT_PATH,
   PROGRESSIVE_FILES,
   PROGRESSIVE_PAGE_PATH,
@@ -184,7 +189,8 @@ async function launch(): Promise<void> {
     args: [
       '--no-first-run',
       '--no-default-browser-check',
-      `--host-resolver-rules=MAP ${BLOCKED_HOST} 127.0.0.1`,
+      // And a known ad host (1.1.0).
+      `--host-resolver-rules=MAP ${BLOCKED_HOST} 127.0.0.1, MAP ${JUNK_AD_HOST} 127.0.0.1`,
       ...(legacy ? [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`] : []),
     ],
   });
@@ -615,6 +621,59 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
     const liveRequests = site.requests.filter((entry) => entry.path === LIVE_PATH).length;
     expect(liveRequests).toBeGreaterThanOrEqual(LIVE_RELOADS + 1);
     expect(liveRequests).toBeLessThanOrEqual(LIVE_RELOADS + 3);
+    await page.close();
+    await ext.close();
+  });
+
+  it('hides an ad and a hover preview from the badge and the popup until asked, and lists them when the setting is off (1.1.0)', async () => {
+    const pageUrl = `${site.origin}${JUNK_PAGE_PATH}`;
+    const page = await browser.newPage();
+    await page.goto(pageUrl);
+    const ext = await extensionPage();
+    const { tabId } = await detected(ext, pageUrl, [JUNK_VIDEO_PATH, JUNK_PREVIEW_PATH, JUNK_AD_PATH]);
+    const marks = await waitFor('the junk marks', async () => {
+      const stored = await ext.evaluate(async (key) => ((await chrome.storage.session.get(key))[key] as { streams: DetectedStream[] } | undefined)?.streams ?? [], `detections:${tabId}`);
+      const byPath = Object.fromEntries(stored.map((stream) => [new URL(stream.url).pathname, stream.hidden ?? 'listed']));
+      return Object.keys(byPath).length === 3 && byPath[JUNK_PREVIEW_PATH] === 'short-clip' ? byPath : undefined;
+    });
+    expect(marks).toEqual({ [JUNK_VIDEO_PATH]: 'listed', [JUNK_PREVIEW_PATH]: 'short-clip', [JUNK_AD_PATH]: 'ad-host' });
+    const badge = () => ext.evaluate((id) => chrome.action.getBadgeText({ tabId: id }), tabId);
+    expect(await badge()).toBe('1');
+
+    if (chromeMajor >= POPUP_WINDOW_CHROME) {
+      await page.bringToFront();
+      const known = new Set(browser.targets());
+      const worker = await (await serviceWorker()).worker();
+      await worker?.evaluate(() => chrome.action.openPopup());
+      const popupTarget = await browser.waitForTarget((target) => !known.has(target) && target.url().includes('/popup/index.html'), { timeout: 10_000 });
+      const popup = await popupTarget.asPage();
+      await popup.waitForFunction(() => document.body.innerText.includes('2 ads or previews hidden'), { timeout: 10_000 });
+      expect(await popup.$$eval('li[data-stream-id]', (rows) => rows.length)).toBe(1);
+      await popup.evaluate(() => {
+        [...document.querySelectorAll('button')].find((button) => button.textContent === 'Show')?.click();
+      });
+      await popup.waitForFunction(() => document.querySelectorAll('li[data-stream-id]').length === 3, { timeout: 10_000 });
+      expect(await popup.evaluate(() => document.body.innerText)).toContain('Likely an ad');
+      await popup.close();
+    }
+
+    // Settings → Hide ads and previews off: every video counts again; back on afterwards.
+    const setHideJunk = (value: boolean) =>
+      ext.evaluate(
+        async (key, value) => {
+          const current = ((await chrome.storage.local.get(key))[key] as Record<string, unknown> | undefined) ?? {};
+          await chrome.storage.local.set({ [key]: { ...current, hideJunk: value } });
+        },
+        STORAGE_KEYS.settings,
+        value,
+      );
+    try {
+      await setHideJunk(false);
+      await waitFor('the badge to count every video', async () => ((await badge()) === '3' ? true : undefined), 10_000);
+    } finally {
+      await setHideJunk(true);
+    }
+    await waitFor('the badge to leave the hidden out again', async () => ((await badge()) === '1' ? true : undefined), 10_000);
     await page.close();
     await ext.close();
   });

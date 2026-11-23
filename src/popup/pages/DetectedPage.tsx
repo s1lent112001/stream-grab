@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { BLOCKED_SITE_MESSAGE, isBlockedUrl } from '@/core/detection/blocked-sites';
+import { listedStreams } from '@/core/detection/junk-filter';
 import { extensionFor } from '@/core/download/file-name';
 import type { DetectedStream } from '@/core/models/detected-stream';
 import { sendToBackground } from '@/shared/messaging/client';
@@ -24,6 +25,12 @@ import {
 interface DetectedPageProps {
   onShowQueue: () => void;
   /**
+   * "N hidden · Show" (1.1.0): the ads and previews are listed too. Kept by the popup (App) so it
+   * lasts until the popup closes; without these props the page keeps it itself.
+   */
+  showHidden?: boolean;
+  onShowHiddenChange?: (show: boolean) => void;
+  /**
    * Gọi sau khi các video đã vào hàng đợi, với ô poster (đang thấy được) của chúng: điểm xuất phát
    * của hiệu ứng gắp. Gọi sau khi React đã vẽ lại để vị trí các ô là vị trí thật.
    */
@@ -39,7 +46,7 @@ interface Feedback {
   failed: number;
 }
 
-export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted }: DetectedPageProps) {
+export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted, ...props }: DetectedPageProps) {
   const tab = useActiveTab();
   const tabId = tab.state === 'ready' ? tab.tabId : undefined;
   const detections = useDetections(tabId);
@@ -52,6 +59,9 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [ownShowHidden, setOwnShowHidden] = useState(false);
+  const showHidden = props.showHidden ?? ownShowHidden;
+  const setShowHidden = props.onShowHiddenChange ?? setOwnShowHidden;
   const list = useRef<HTMLUListElement>(null);
   /** Stream vừa vào hàng đợi, chờ lần vẽ tiếp theo để bay (thông báo phía trên làm các dòng dịch xuống). */
   const pendingGrab = useRef<readonly string[] | null>(null);
@@ -91,7 +101,9 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
     );
   }
 
-  const streams = detections.streams;
+  const hideJunk = (settings?.hideJunk ?? true) && !showHidden;
+  const streams = listedStreams(detections.streams, hideJunk);
+  const hiddenCount = detections.streams.filter((stream) => stream.hidden !== undefined).length;
   const preference = settings?.preferredResolution ?? 'highest';
   const extension = extensionFor(settings?.outputFormat ?? 'auto');
   const subtitles = {
@@ -208,12 +220,39 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
         </div>
       )}
 
+      {!blockedPage && hiddenCount > 0 && settings?.hideJunk !== false && (
+        <p className="mx-4 mt-2 flex items-center gap-1.5 text-meta text-muted">
+          <span>
+            {hiddenCount} {hiddenCount === 1 ? 'ad or preview' : 'ads or previews'} {showHidden ? 'shown' : 'hidden'}
+          </span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            onClick={() => {
+              if (showHidden) {
+                // Hidden again: a hidden video ticked while shown must not come back ticked.
+                const hiddenIds = new Set(detections.streams.flatMap((stream) => (stream.hidden !== undefined ? [stream.id] : [])));
+                setSelected((previous) => new Set([...previous].filter((id) => !hiddenIds.has(id))));
+              }
+              setShowHidden(!showHidden);
+            }}
+            aria-pressed={showHidden}
+            className="cursor-pointer font-semibold text-ink underline-offset-2 hover:underline"
+          >
+            {showHidden ? 'Hide' : 'Show'}
+          </button>
+        </p>
+      )}
       {blockedPage ? (
         <EmptyState title="This site is not supported" icon="off">
           {BLOCKED_SITE_MESSAGE} Videos on it are not detected or downloaded.
         </EmptyState>
       ) : streams.length === 0 ? (
-        httpPage ? (
+        hiddenCount > 0 ? (
+          <EmptyState title="Only ads or previews found" icon="search">
+            Nothing else on this page looks like a video yet. Play the video you want, or show the hidden ones.
+          </EmptyState>
+        ) : httpPage ? (
           <EmptyState title="No streams detected on this page yet" icon="search">
             Start playing a video. Supported streams appear here as soon as the page loads them.
           </EmptyState>

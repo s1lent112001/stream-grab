@@ -250,7 +250,8 @@ export class TaskService {
       progressive: { container: file.container, fetch: 'browser', ...(file.bytes !== undefined ? { bytes: file.bytes } : {}) },
     };
     if (stream.pageUrl !== undefined) task.source.pageUrl = stream.pageUrl;
-    if (stream.durationHint !== undefined) task.selection.durationSec = stream.durationHint;
+    const durationSec = file.durationSec ?? stream.durationHint;
+    if (durationSec !== undefined) task.selection.durationSec = durationSec;
     if (subtitles.length > 0) {
       task.selection.subtitles = subtitles;
       task.output.subtitleFormat = settings.subtitleFormat;

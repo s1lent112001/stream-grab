@@ -302,3 +302,65 @@ describe('Detected tab: subtitles (0.7.0)', () => {
     });
   });
 });
+
+describe('Detected tab: hidden ads and previews (1.1.0)', () => {
+  async function open(settings: Record<string, unknown> = {}) {
+    const chrome = await installPopupChrome({ activeTab: TAB, settings, answers: { 'downloads/start': { created: [], failed: [] } } });
+    const streams = [
+      stream('first'),
+      stream('ad', { title: 'Sponsored', hidden: 'ad-host' }),
+      stream('hover', { title: 'Hover preview', hidden: 'short-clip' }),
+    ];
+    await chrome.session.set({ [detectionStorageKey(TAB.id)]: { version: 1, tabId: TAB.id, generation: 1, streams, updatedAt: 1 } });
+    const view = await render(DetectedPage, { onShowQueue: () => undefined });
+    unmount = () => view.root.unmount();
+    const titles = () => [...view.container.querySelectorAll('li')].map((row) => row.querySelector('label')?.textContent);
+    return { ...chrome, view, titles };
+  }
+
+  it('leaves them out of the list and Select all, and shows them on request with the reason', async () => {
+    const { view, titles, sent } = await open();
+    expect(titles()).toEqual(['Movie Title']);
+    expect(view.container.textContent).toContain('2 ads or previews hidden');
+    expect(view.container.textContent).toContain('1 stream');
+
+    await click(view.container, 'Show');
+    expect(titles()).toEqual(['Movie Title', 'Sponsored', 'Hover preview']);
+    expect(view.container.textContent).toContain('2 ads or previews shown');
+    const rows = [...view.container.querySelectorAll('li')];
+    expect(rows[1]?.textContent).toContain('Likely an ad');
+    expect(rows[2]?.textContent).toContain('Likely a preview');
+
+    // A hidden video ticked while shown is dropped when they are hidden again, also from Select all.
+    await check(view.container.querySelector('input#select-ad'));
+    await click(view.container, 'Hide');
+    expect(titles()).toEqual(['Movie Title']);
+    await check(view.container.querySelector('input[aria-label="Select all downloadable videos"]'));
+    await click(view.container, 'Show');
+    expect(view.container.querySelector<HTMLInputElement>('input#select-ad')?.checked).toBe(false);
+    await click(view.container, 'Hide');
+    const download = [...view.container.querySelectorAll('button')].find((button) => button.textContent?.includes('Download') && button.textContent.includes('1'));
+    await act(async () => {
+      download?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(sent.at(-1)).toMatchObject({ type: 'downloads/start', payload: { requests: [{ streamId: 'first' }] } });
+  });
+
+  it('says so when only ads or previews were found', async () => {
+    const chrome = await installPopupChrome({ activeTab: TAB });
+    await chrome.session.set({
+      [detectionStorageKey(TAB.id)]: { version: 1, tabId: TAB.id, generation: 1, streams: [stream('ad', { hidden: 'ad-host' })], updatedAt: 1 },
+    });
+    const view = await render(DetectedPage, { onShowQueue: () => undefined });
+    unmount = () => view.root.unmount();
+    expect(view.container.textContent).toContain('Only ads or previews found');
+    expect(view.container.textContent).toContain('1 ad or preview hidden');
+  });
+
+  it('lists everything without the line when the setting is off', async () => {
+    const { view, titles } = await open({ hideJunk: false });
+    expect(titles()).toEqual(['Movie Title', 'Sponsored', 'Hover preview']);
+    expect(view.container.textContent).not.toContain('hidden');
+  });
+});

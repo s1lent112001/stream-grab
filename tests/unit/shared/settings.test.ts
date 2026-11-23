@@ -46,6 +46,9 @@ describe('normalizeSettings', () => {
   it('accepts only real booleans for toggles', () => {
     expect(normalizeSettings({ autoDetect: false }).autoDetect).toBe(false);
     expect(normalizeSettings({ autoDetect: 'false' }).autoDetect).toBe(true);
+    expect(normalizeSettings({}).hideJunk).toBe(true);
+    expect(normalizeSettings({ hideJunk: false }).hideJunk).toBe(false);
+    expect(normalizeSettings({ hideJunk: 0 }).hideJunk).toBe(true);
     expect(normalizeSettings({ autoRemoveCompleted: true }).autoRemoveCompleted).toBe(true);
     expect(normalizeSettings({ autoRemoveCompleted: 1 }).autoRemoveCompleted).toBe(false);
   });

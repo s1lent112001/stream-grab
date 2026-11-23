@@ -89,6 +89,37 @@ export function slowProtectedBytes(files: SyntheticFiles): Uint8Array<ArrayBuffe
   return out;
 }
 
+/**
+ * A page with one real video and two things the junk filter (1.1.0) hides: a 2-second, 160×90
+ * hover preview under a `previews` path, and an ad served by a known ad host (the e2e Chrome
+ * resolves JUNK_AD_HOST to the fixture site). The real video is an HLS master of unknown length.
+ */
+export const JUNK_PAGE_PATH = '/files/junk';
+export const JUNK_VIDEO_PATH = '/junk/movie/master.m3u8';
+export const JUNK_PREVIEW_PATH = '/files/junk/previews/hover-1.mp4';
+export const JUNK_AD_PATH = '/files/junk/ad-creative.mp4';
+/** On the junk filter's ad host list; not on Chrome's HSTS preload list, so plain http works. */
+export const JUNK_AD_HOST = 'ads.stickyadstv.com';
+
+function junkPage(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>StreamGrab junk filter</title></head>
+<body style="font:14px system-ui;max-width:760px;margin:24px auto;line-height:1.4">
+<h1>A video, a hover preview and an ad</h1>
+<p>The popup should list one video (the HLS stream) and say that 2 ads or previews are hidden.</p>
+<video title="Hover preview" src="${JUNK_PREVIEW_PATH}" preload="auto" muted width="160"></video>
+<div id="ad"></div>
+<script>
+fetch('${JUNK_VIDEO_PATH}').then((r) => r.text());
+const ad = document.createElement('video');
+ad.title = 'Sponsored';
+ad.muted = true;
+ad.preload = 'auto';
+ad.src = 'http://${JUNK_AD_HOST}:' + location.port + '${JUNK_AD_PATH}';
+document.getElementById('ad').append(ad);
+</script>
+</body></html>`;
+}
+
 const CONTENT_TYPES = { mp4: 'video/mp4', webm: 'video/webm' } as const;
 
 function page(): string {
@@ -175,6 +206,8 @@ export function createProgressiveRouter(files: SyntheticFiles): (pathname: strin
       const response = serveFile(slowProtected, 'video/mp4', range);
       return { ...response, headers: { ...response.headers, etag: SLOW_PROTECTED_ETAG }, bytesPerSecond: SLOW_PROTECTED_RATE };
     }
+    if (pathname === JUNK_PAGE_PATH) return { status: 200, contentType: 'text/html; charset=utf-8', body: junkPage() };
+    if (pathname === JUNK_PREVIEW_PATH || pathname === JUNK_AD_PATH) return serveFile(files.mp4FastStart, 'video/mp4', request?.range);
     if (pathname === MSE_SEGMENT_PATH) return serveFile(files.mp4Fragmented, 'video/mp4', request?.range);
     if (pathname === REDIRECT_TARGET_PATH) return serveFile(files.mp4Fragmented, 'video/mp4', request?.range);
     const fixture = PROGRESSIVE_FILES.find((candidate) => candidate.path === pathname);

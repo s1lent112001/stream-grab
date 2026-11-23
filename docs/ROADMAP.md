@@ -244,7 +244,13 @@ Phases (one session each, checks and e2e at the end of each):
    file inspector; unit tests with sample URLs and file heads. **Done 2026-11-23**
    (`core/detection/media-head.ts` also reads the picture size).
 2. Wiring: detection manager, badge, the setting, the popup "Show hidden" line, selection;
-   e2e fixtures for an ad and a hover preview.
+   e2e fixtures for an ad and a hover preview. **Done 2026-11-23**: the manager marks streams
+   before every save; setting `hideJunk`; the popup line reads "2 ads or previews hidden · Show"
+   and shown ones carry a "Likely an ad" / "Likely a preview" tag; an MP4 / WebM file's own
+   length is shown in the popup; the e2e Chrome resolves a real ad host to the fixture site.
+   "The page's only video" became: a page never lists nothing because of the filter; when every
+   video would be hidden, the best guess (longest, else biggest; not from an ad host first) stays.
+   The "Show" choice lasts until the popup closes, across its tabs.
 3. Settings in sections, checked in the real popup in Chrome.
 4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
    line for "Show hidden".

@@ -2,6 +2,7 @@ import { DetectionManager } from '@/core/detection/detection-manager';
 import { SessionDetectionStore } from '@/core/detection/detection-store';
 import { domSourceCandidate } from '@/core/detection/dom-candidate';
 import { inspectProgressiveFile } from '@/core/detection/file-inspector';
+import { listedStreams } from '@/core/detection/junk-filter';
 import { inspectStream } from '@/core/detection/stream-inspector';
 import { inspectSubtitleFile } from '@/core/detection/subtitle-inspector';
 import type { RequestContext } from '@/core/models/detected-stream';
@@ -49,8 +50,9 @@ export function startDetectionService(): DetectionService {
   const fetcher = new ManifestFetcher(network);
   const protocols = new ProtocolRegistry().register(new HlsAdapter({ fetcher })).register(new DashAdapter({ fetcher }));
 
+  const detections = new SessionDetectionStore(chrome.storage.session);
   const manager = new DetectionManager({
-    store: new SessionDetectionStore(chrome.storage.session),
+    store: detections,
     // Progressive files (MP4/WebM) are checked from their first bytes, with the same request context as manifests.
     inspect: (url, context, kind) =>
       kind === 'progressive' ? inspectProgressiveFile(network, url, context) : inspectStream({ fetcher, protocols }, url, context),
@@ -66,17 +68,20 @@ export function startDetectionService(): DetectionService {
       delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     }),
     onTabChanged: (tabId, streams) => {
-      updateBadge(tabId, streams.length);
+      updateBadge(tabId, listedStreams(streams, hideJunk).length);
     },
     logger: log,
   });
 
   // Detection is on until settings say otherwise; candidates wait for the settings read.
   let enabled = true;
+  /** Settings → hide ads and previews (1.1.0): the badge counts only the videos the list shows. */
+  let hideJunk = true;
   const store = getSettingsStore();
   const settingsLoaded = store.load().then(
     (settings) => {
       applyEnabled(settings.autoDetect);
+      applyHideJunk(settings.hideJunk);
     },
     (error: unknown) => {
       log.warn('Could not read settings; detection stays on', { error: errorMessage(error) });
@@ -108,8 +113,27 @@ export function startDetectionService(): DetectionService {
     enabled = autoDetect;
     monitor.setEnabled(autoDetect);
   }
+  /**
+   * A changed setting recounts the badge of every tab from the stored detections (already marked:
+   * the manager marks before it saves). Reading the store creates no tab state and starts no
+   * inspection; a tab closed meanwhile only fails its badge update harmlessly.
+   */
+  function applyHideJunk(value: boolean): void {
+    if (value === hideJunk) return;
+    hideJunk = value;
+    void (async () => {
+      for (const tab of await chrome.tabs.query({})) {
+        if (tab.id === undefined || tab.id === chrome.tabs.TAB_ID_NONE) continue;
+        const stored = await detections.load(tab.id);
+        updateBadge(tab.id, listedStreams(stored?.streams ?? [], hideJunk).length);
+      }
+    })().catch((error: unknown) => {
+      log.warn('Could not update the badges', { error: errorMessage(error) });
+    });
+  }
   store.subscribe((settings) => {
     applyEnabled(settings.autoDetect);
+    applyHideJunk(settings.hideJunk);
   });
 
   chrome.tabs.onRemoved.addListener((tabId) => {

@@ -17,6 +17,8 @@ export function App() {
   const [tab, setTab] = useState<TabId>('detected');
   /** About takes the tab bar's place; Back returns to the tab the user was on. */
   const [about, setAbout] = useState(false);
+  /** Detected tab's "Show" for ads and previews (1.1.0): kept while the popup is open, across its tabs. */
+  const [showHidden, setShowHidden] = useState(false);
   const status = useBackgroundStatus();
   const tasks = useTasks();
   const { theme, setTheme } = useTheme();
@@ -46,6 +48,8 @@ export function App() {
           <main className="min-h-0 flex-1 overflow-y-auto">
             {tab === 'detected' && (
               <DetectedPage
+                showHidden={showHidden}
+                onShowHiddenChange={setShowHidden}
                 onShowQueue={() => {
                   setTab('queue');
                 }}

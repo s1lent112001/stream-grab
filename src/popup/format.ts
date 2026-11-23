@@ -268,6 +268,8 @@ export function streamTags(stream: DetectedStream): string[] {
   if (manifest && manifest.encryption !== 'none' && stream.status !== 'drm') {
     tags.push(ENCRYPTION_LABELS[manifest.encryption]);
   }
+  // Shown only when the hidden ones are (1.1.0): why the junk filter hid it.
+  if (stream.hidden !== undefined) tags.push(stream.hidden === 'ad-host' ? 'Likely an ad' : 'Likely a preview');
   return tags;
 }
 

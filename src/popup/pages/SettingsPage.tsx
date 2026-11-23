@@ -415,6 +415,23 @@ export function SettingsPage() {
         />
 
         <SettingRow
+          id="hide-junk"
+          label="Hide ads and previews"
+          description="Leave out video ads, thumbnails and hover previews. The Detected tab can still show them."
+          control={
+            <Toggle
+              id="hide-junk"
+              checked={settings.hideJunk}
+              labelledBy="hide-junk-label"
+              describedBy="hide-junk-desc"
+              onChange={(checked) => {
+                update({ hideJunk: checked });
+              }}
+            />
+          }
+        />
+
+        <SettingRow
           id="auto-remove"
           label="Remove finished tasks from the queue"
           description="Completed videos stay listed under Completed."

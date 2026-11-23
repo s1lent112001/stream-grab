@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hiddenReason, isAdHost, previewPathWord } from '@/core/detection/junk-filter';
+import { hiddenReason, isAdHost, junkMarks, previewPathWord } from '@/core/detection/junk-filter';
 import type { DetectedStream, ProgressiveInfo } from '@/core/models/detected-stream';
 
 const several = { onlyVideo: false };
@@ -118,5 +118,37 @@ describe('hiddenReason', () => {
     const live = hls('https://cdn.example/thumb/live.m3u8', undefined, [144]);
     live.manifest = { role: 'media', live: true, drmSystems: [], encryption: 'none' };
     expect(hiddenReason({ ...live, status: 'pending' }, several)).toBeUndefined();
+  });
+});
+
+describe('listedStreams (1.1.0)', () => {
+  it('leaves the hidden streams out only while the setting hides them', async () => {
+    const { listedStreams } = await import('@/core/detection/junk-filter');
+    const streams = [{ id: 'a' }, { id: 'b', hidden: 'ad-host' as const }];
+    expect(listedStreams(streams, true).map((stream) => stream.id)).toEqual(['a']);
+    expect(listedStreams(streams, false).map((stream) => stream.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('junkMarks (1.1.0)', () => {
+  const preview = (n: number, bytes: number) =>
+    file(`https://media.example.net/previews/hover-${n}.mp4`, { durationSec: 4 + n, bytes }, { id: `p${n}`, firstSeen: n });
+
+  it('marks the previews next to a real video', () => {
+    const movie = file('https://media.example.net/v/movie.mp4', { durationSec: 1_800 }, { id: 'movie', firstSeen: 0 });
+    expect(junkMarks([preview(1, 300_000), movie, preview(2, 300_000)])).toEqual(['short-clip', undefined, 'short-clip']);
+  });
+
+  it('keeps the best guess listed when every video would be hidden', () => {
+    expect(junkMarks([preview(1, 300_000)])).toEqual([undefined]);
+    // The longer of two previews stays: the page never lists nothing.
+    expect(junkMarks([preview(1, 300_000), preview(2, 300_000)])).toEqual(['short-clip', undefined]);
+  });
+
+  it('keeps a video not from an ad host over an ad, and one ad when there is nothing else', () => {
+    const ad = file('https://s0.2mdn.net/ads/creative.mp4', { durationSec: 30 }, { id: 'ad', firstSeen: 0 });
+    expect(junkMarks([ad, preview(1, 300_000)])).toEqual(['ad-host', undefined]);
+    const otherAd = file('https://ads.teads.tv/v/creative.mp4', { durationSec: 20 }, { id: 'ad2', firstSeen: 1 });
+    expect(junkMarks([ad, otherAd])).toEqual([undefined, 'ad-host']);
   });
 });

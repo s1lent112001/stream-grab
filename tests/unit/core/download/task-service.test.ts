@@ -190,6 +190,19 @@ describe('TaskService.start', () => {
     expect(await store.list()).toEqual([]);
   });
 
+  it('takes a file’s own length from its header over its <video> element’s (1.1.0)', async () => {
+    const { service, streams, store } = await setup();
+    streams.set('mp4', {
+      ...baseStream('mp4', 'https://cdn.example.com/v/clip.mp4', { title: 'Trailer', durationHint: 95 }),
+      protocol: 'progressive',
+      progressive: { container: 'mp4', durationSec: 42 },
+      media: { variants: [{ id: 'file', audioOnly: false, audioTrackIds: [] }], audioTracks: [] },
+    });
+    await service.start([request('mp4', { variantId: 'file' })]);
+    const [task] = await store.list();
+    expect(task?.selection.durationSec).toBe(42);
+  });
+
   it('queues progressive files (0.3.0): the original file in its own container, fetched by Chrome first', async () => {
     const { service, streams, store, session } = await setup({ settings: { outputFormat: 'mkv' } });
     const file = (id: string, url: string, container: 'mp4' | 'webm', bytes?: number): DetectedStream => ({

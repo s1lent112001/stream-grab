@@ -165,3 +165,40 @@ export function hiddenReason(stream: DetectedStream, context: JunkContext): Hidd
   if (stream.status === 'pending' && pathWord && duration === undefined) return 'preview-path';
   return undefined;
 }
+
+/** Larger is a better guess at the page's main video: longer, else bigger file, else higher picture, else seen first. */
+function mainVideoScore(stream: DetectedStream): [number, number, number, number] {
+  return [knownDurationSec(stream) ?? -1, stream.progressive?.bytes ?? -1, bestHeight(stream) ?? -1, -stream.firstSeen];
+}
+
+function better(a: DetectedStream, b: DetectedStream): boolean {
+  const x = mainVideoScore(a);
+  const y = mainVideoScore(b);
+  for (let i = 0; i < x.length; i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * The mark of each stream of a page, in order. A page never lists nothing because of the filter:
+ * when every stream would be hidden, the best guess at the main video stays listed (a video not
+ * from an ad host first). Entries of one video that are not folded yet (a link and its redirect
+ * target, a master's playlists still pending) or a second hover preview so never empty the list,
+ * and the first preview listed does not vanish when the next one appears unless a real video does.
+ */
+export function junkMarks(streams: readonly DetectedStream[]): (HiddenReason | undefined)[] {
+  const marks = streams.map((stream) => hiddenReason(stream, { onlyVideo: streams.length === 1 }));
+  if (streams.length < 2 || marks.some((mark) => mark === undefined)) return marks;
+  const pool = streams.filter((_stream, index) => marks[index] !== 'ad-host');
+  let keep: DetectedStream | undefined;
+  for (const stream of pool.length > 0 ? pool : streams) {
+    if (keep === undefined || better(stream, keep)) keep = stream;
+  }
+  return marks.map((mark, index) => (streams[index] === keep ? undefined : mark));
+}
+
+/** The streams the list and the badge show: without the hidden ones while the setting hides them. */
+export function listedStreams<T extends Pick<DetectedStream, 'hidden'>>(streams: readonly T[], hideJunk: boolean): T[] {
+  return hideJunk ? streams.filter((stream) => stream.hidden === undefined) : [...streams];
+}
