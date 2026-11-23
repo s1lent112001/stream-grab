@@ -958,6 +958,14 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith('Settings'))?.click();
     });
     await ext.waitForSelector('input[name="theme"]');
+    // Settings in sections (1.1.0): headings on one scrolling page, Theme under Appearance.
+    expect(await ext.$$eval('main section > h2', (headings) => headings.map((heading) => heading.textContent))).toEqual([
+      'Downloads',
+      'Subtitles',
+      'Detection',
+      'Appearance',
+    ]);
+    expect(await ext.$eval('input[name="theme"]', (input) => input.closest('section')?.querySelector('h2')?.textContent)).toBe('Appearance');
     await ext.evaluate(() => {
       const main = document.querySelector('main');
       if (main) main.scrollTop = main.scrollHeight;

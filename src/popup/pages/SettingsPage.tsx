@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { MAX_FOLDER_LENGTH, parseDownloadFolder } from '@/core/download/file-name';
 import { ACTIVE_TASKS, SEGMENT_CONCURRENCY } from '@/shared/constants';
 import {
@@ -215,6 +215,18 @@ function SubtitleLanguagesInput({ value, onSave }: { value: string; onSave: (lan
   );
 }
 
+/** One group of settings: a heading, then its rows. One scrolling page, no tabs or accordions. */
+function SettingsSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="pt-4">
+      <h2 id={id} className="font-bold text-muted">
+        {title}
+      </h2>
+      <div className="divide-y divide-line">{children}</div>
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const { settings, error, update, reset } = useSettings();
 
@@ -230,245 +242,251 @@ export function SettingsPage() {
         </p>
       )}
 
-      <section className="divide-y divide-line">
-        <SettingRow
-          id="segment-concurrency"
-          label={`Concurrent segment requests: ${settings.segmentConcurrency}`}
-          description="Parallel requests per video. More is not always faster; some servers throttle or block aggressive clients."
-          stacked
-          control={
-            <input
-              id="segment-concurrency"
-              type="range"
-              min={SEGMENT_CONCURRENCY.min}
-              max={SEGMENT_CONCURRENCY.max}
-              step={1}
-              value={settings.segmentConcurrency}
-              style={rangeFill(settings.segmentConcurrency, SEGMENT_CONCURRENCY)}
-              aria-describedby="segment-concurrency-desc"
-              onChange={(event) => {
-                update({ segmentConcurrency: event.currentTarget.valueAsNumber });
-              }}
-              className={rangeClass}
-            />
-          }
-        />
+      <SettingsSection id="settings-downloads" title="Downloads">
+          <SettingRow
+            id="segment-concurrency"
+            label={`Concurrent segment requests: ${settings.segmentConcurrency}`}
+            description="Parallel requests per video. More is not always faster; some servers throttle or block aggressive clients."
+            stacked
+            control={
+              <input
+                id="segment-concurrency"
+                type="range"
+                min={SEGMENT_CONCURRENCY.min}
+                max={SEGMENT_CONCURRENCY.max}
+                step={1}
+                value={settings.segmentConcurrency}
+                style={rangeFill(settings.segmentConcurrency, SEGMENT_CONCURRENCY)}
+                aria-describedby="segment-concurrency-desc"
+                onChange={(event) => {
+                  update({ segmentConcurrency: event.currentTarget.valueAsNumber });
+                }}
+                className={rangeClass}
+              />
+            }
+          />
 
-        <SettingRow
-          id="active-tasks"
-          label={`Simultaneous downloads: ${settings.maxActiveTasks}`}
-          description="Videos that download segments at the same time. Merging always runs one video at a time."
-          stacked
-          control={
-            <input
-              id="active-tasks"
-              type="range"
-              min={ACTIVE_TASKS.min}
-              max={ACTIVE_TASKS.max}
-              step={1}
-              value={settings.maxActiveTasks}
-              style={rangeFill(settings.maxActiveTasks, ACTIVE_TASKS)}
-              aria-describedby="active-tasks-desc"
-              onChange={(event) => {
-                update({ maxActiveTasks: event.currentTarget.valueAsNumber });
-              }}
-              className={rangeClass}
-            />
-          }
-        />
+          <SettingRow
+            id="active-tasks"
+            label={`Simultaneous downloads: ${settings.maxActiveTasks}`}
+            description="Videos that download segments at the same time. Merging always runs one video at a time."
+            stacked
+            control={
+              <input
+                id="active-tasks"
+                type="range"
+                min={ACTIVE_TASKS.min}
+                max={ACTIVE_TASKS.max}
+                step={1}
+                value={settings.maxActiveTasks}
+                style={rangeFill(settings.maxActiveTasks, ACTIVE_TASKS)}
+                aria-describedby="active-tasks-desc"
+                onChange={(event) => {
+                  update({ maxActiveTasks: event.currentTarget.valueAsNumber });
+                }}
+                className={rangeClass}
+              />
+            }
+          />
 
-        <SettingRow
-          id="preferred-resolution"
-          label="Default resolution"
-          description="Picked when a stream offers several qualities. Falls back to the nearest lower one."
-          control={
-            <Select
-              id="preferred-resolution"
-              value={settings.preferredResolution}
-              aria-describedby="preferred-resolution-desc"
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                if (isOneOf(value, RESOLUTION_PREFERENCES)) update({ preferredResolution: value });
-              }}
-              className="w-44"
-            >
-              {RESOLUTION_PREFERENCES.map((option) => (
-                <option key={option} value={option}>
-                  {RESOLUTION_LABELS[option]}
-                </option>
-              ))}
-            </Select>
-          }
-        />
+          <SettingRow
+            id="preferred-resolution"
+            label="Default resolution"
+            description="Picked when a stream offers several qualities. Falls back to the nearest lower one."
+            control={
+              <Select
+                id="preferred-resolution"
+                value={settings.preferredResolution}
+                aria-describedby="preferred-resolution-desc"
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  if (isOneOf(value, RESOLUTION_PREFERENCES)) update({ preferredResolution: value });
+                }}
+                className="w-44"
+              >
+                {RESOLUTION_PREFERENCES.map((option) => (
+                  <option key={option} value={option}>
+                    {RESOLUTION_LABELS[option]}
+                  </option>
+                ))}
+              </Select>
+            }
+          />
 
-        <SettingRow
-          id="output-format"
-          label="Output format"
-          description="Streams are copied without re-encoding. Auto saves MP4, or MKV when the streams cannot be stored in MP4."
-          control={
-            <Select
-              id="output-format"
-              value={settings.outputFormat}
-              aria-describedby="output-format-desc"
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                if (isOneOf(value, OUTPUT_FORMATS)) update({ outputFormat: value });
-              }}
-              className="w-44"
-            >
-              {OUTPUT_FORMATS.map((option) => (
-                <option key={option} value={option}>
-                  {FORMAT_LABELS[option]}
-                </option>
-              ))}
-            </Select>
-          }
-        />
+          <SettingRow
+            id="output-format"
+            label="Output format"
+            description="Streams are copied without re-encoding. Auto saves MP4, or MKV when the streams cannot be stored in MP4."
+            control={
+              <Select
+                id="output-format"
+                value={settings.outputFormat}
+                aria-describedby="output-format-desc"
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  if (isOneOf(value, OUTPUT_FORMATS)) update({ outputFormat: value });
+                }}
+                className="w-44"
+              >
+                {OUTPUT_FORMATS.map((option) => (
+                  <option key={option} value={option}>
+                    {FORMAT_LABELS[option]}
+                  </option>
+                ))}
+              </Select>
+            }
+          />
 
-        <SettingRow
-          id="download-folder"
-          label="Save in a subfolder"
-          description="A folder inside Chrome's download folder, such as StreamGrab or Videos/StreamGrab. Chrome creates it when it saves the first video there."
-          stacked
-          control={
-            <DownloadFolderInput
-              value={settings.downloadFolder}
-              onSave={(folder) => {
-                update({ downloadFolder: folder });
-              }}
-            />
-          }
-        />
+          <SettingRow
+            id="download-folder"
+            label="Save in a subfolder"
+            description="A folder inside Chrome's download folder, such as StreamGrab or Videos/StreamGrab. Chrome creates it when it saves the first video there."
+            stacked
+            control={
+              <DownloadFolderInput
+                value={settings.downloadFolder}
+                onSave={(folder) => {
+                  update({ downloadFolder: folder });
+                }}
+              />
+            }
+          />
 
-        <SettingRow
-          id="subtitle-languages"
-          label="Subtitle languages"
-          description="Subtitles in these languages are ticked in the Detected tab, one per language, in this order. Language codes such as en, vi or pt-BR."
-          stacked
-          control={
-            <SubtitleLanguagesInput
-              value={settings.subtitleLanguages}
-              onSave={(subtitleLanguages) => {
-                update({ subtitleLanguages });
-              }}
-            />
-          }
-        />
+          <SettingRow
+            id="auto-remove"
+            label="Remove finished tasks from the queue"
+            description="Completed videos stay listed under Completed."
+            control={
+              <Toggle
+                id="auto-remove"
+                checked={settings.autoRemoveCompleted}
+                labelledBy="auto-remove-label"
+                describedBy="auto-remove-desc"
+                onChange={(checked) => {
+                  update({ autoRemoveCompleted: checked });
+                }}
+              />
+            }
+          />
+      </SettingsSection>
 
-        <SettingRow
-          id="subtitle-mode"
-          label="Where subtitles go"
-          description="In video puts them inside the MP4/MKV (HLS and DASH; direct video files get files)."
-          group
-          control={
-            <Segmented
-              id="subtitle-mode"
-              name="subtitle-mode"
-              value={settings.subtitleMode}
-              options={SUBTITLE_MODE_OPTIONS}
-              labelledBy="subtitle-mode-label"
-              describedBy="subtitle-mode-desc"
-              onChange={(subtitleMode) => {
-                update({ subtitleMode });
-              }}
-              className="w-48"
-            />
-          }
-        />
+      <SettingsSection id="settings-subtitles" title="Subtitles">
+          <SettingRow
+            id="subtitle-languages"
+            label="Subtitle languages"
+            description="Subtitles in these languages are ticked in the Detected tab, one per language, in this order. Language codes such as en, vi or pt-BR."
+            stacked
+            control={
+              <SubtitleLanguagesInput
+                value={settings.subtitleLanguages}
+                onSave={(subtitleLanguages) => {
+                  update({ subtitleLanguages });
+                }}
+              />
+            }
+          />
 
-        <SettingRow
-          id="subtitle-format"
-          label="Subtitle files"
-          description="SRT plays in most players. WebVTT keeps the format the site serves."
-          group
-          control={
-            <Segmented
-              id="subtitle-format"
-              name="subtitle-format"
-              value={settings.subtitleFormat}
-              options={SUBTITLE_FORMAT_OPTIONS}
-              labelledBy="subtitle-format-label"
-              describedBy="subtitle-format-desc"
-              onChange={(subtitleFormat) => {
-                update({ subtitleFormat });
-              }}
-              className="w-48"
-            />
-          }
-        />
+          <SettingRow
+            id="subtitle-mode"
+            label="Where subtitles go"
+            description="In video puts them inside the MP4/MKV (HLS and DASH; direct video files get files)."
+            group
+            control={
+              <Segmented
+                id="subtitle-mode"
+                name="subtitle-mode"
+                value={settings.subtitleMode}
+                options={SUBTITLE_MODE_OPTIONS}
+                labelledBy="subtitle-mode-label"
+                describedBy="subtitle-mode-desc"
+                onChange={(subtitleMode) => {
+                  update({ subtitleMode });
+                }}
+                className="w-48"
+              />
+            }
+          />
 
-        <SettingRow
-          id="auto-detect"
-          label="Detect videos automatically"
-          description="Watch page network traffic for supported media streams."
-          control={
-            <Toggle
-              id="auto-detect"
-              checked={settings.autoDetect}
-              labelledBy="auto-detect-label"
-              describedBy="auto-detect-desc"
-              onChange={(checked) => {
-                update({ autoDetect: checked });
-              }}
-            />
-          }
-        />
+          <SettingRow
+            id="subtitle-format"
+            label="Subtitle files"
+            description="SRT plays in most players. WebVTT keeps the format the site serves."
+            group
+            control={
+              <Segmented
+                id="subtitle-format"
+                name="subtitle-format"
+                value={settings.subtitleFormat}
+                options={SUBTITLE_FORMAT_OPTIONS}
+                labelledBy="subtitle-format-label"
+                describedBy="subtitle-format-desc"
+                onChange={(subtitleFormat) => {
+                  update({ subtitleFormat });
+                }}
+                className="w-48"
+              />
+            }
+          />
+      </SettingsSection>
 
-        <SettingRow
-          id="hide-junk"
-          label="Hide ads and previews"
-          description="Leave out video ads, thumbnails and hover previews. The Detected tab can still show them."
-          control={
-            <Toggle
-              id="hide-junk"
-              checked={settings.hideJunk}
-              labelledBy="hide-junk-label"
-              describedBy="hide-junk-desc"
-              onChange={(checked) => {
-                update({ hideJunk: checked });
-              }}
-            />
-          }
-        />
+      <SettingsSection id="settings-detection" title="Detection">
+          <SettingRow
+            id="auto-detect"
+            label="Detect videos automatically"
+            description="Watch page network traffic for supported media streams."
+            control={
+              <Toggle
+                id="auto-detect"
+                checked={settings.autoDetect}
+                labelledBy="auto-detect-label"
+                describedBy="auto-detect-desc"
+                onChange={(checked) => {
+                  update({ autoDetect: checked });
+                }}
+              />
+            }
+          />
 
-        <SettingRow
-          id="auto-remove"
-          label="Remove finished tasks from the queue"
-          description="Completed videos stay listed under Completed."
-          control={
-            <Toggle
-              id="auto-remove"
-              checked={settings.autoRemoveCompleted}
-              labelledBy="auto-remove-label"
-              describedBy="auto-remove-desc"
-              onChange={(checked) => {
-                update({ autoRemoveCompleted: checked });
-              }}
-            />
-          }
-        />
+          <SettingRow
+            id="hide-junk"
+            label="Hide ads and previews"
+            description="Leave out video ads, thumbnails and hover previews. The Detected tab can still show them."
+            control={
+              <Toggle
+                id="hide-junk"
+                checked={settings.hideJunk}
+                labelledBy="hide-junk-label"
+                describedBy="hide-junk-desc"
+                onChange={(checked) => {
+                  update({ hideJunk: checked });
+                }}
+              />
+            }
+          />
+      </SettingsSection>
 
-        <SettingRow
-          id="theme"
-          label="Theme"
-          description="System follows Chrome's appearance setting."
-          group
-          control={
-            <Segmented
-              id="theme"
-              name="theme"
-              value={settings.theme}
-              options={THEME_OPTIONS}
-              labelledBy="theme-label"
-              describedBy="theme-desc"
-              onChange={(theme) => {
-                update({ theme });
-              }}
-              className="w-48"
-            />
-          }
-        />
-      </section>
+      <SettingsSection id="settings-appearance" title="Appearance">
+          <SettingRow
+            id="theme"
+            label="Theme"
+            description="System follows Chrome's appearance setting."
+            group
+            control={
+              <Segmented
+                id="theme"
+                name="theme"
+                value={settings.theme}
+                options={THEME_OPTIONS}
+                labelledBy="theme-label"
+                describedBy="theme-desc"
+                onChange={(theme) => {
+                  update({ theme });
+                }}
+                className="w-48"
+              />
+            }
+          />
+      </SettingsSection>
 
       <button type="button" onClick={reset} className={`${BUTTON.ghost} mt-1 -ml-2.5`}>
         Reset to defaults

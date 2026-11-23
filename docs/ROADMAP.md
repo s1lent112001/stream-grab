@@ -251,7 +251,9 @@ Phases (one session each, checks and e2e at the end of each):
    "The page's only video" became: a page never lists nothing because of the filter; when every
    video would be hidden, the best guess (longest, else biggest; not from an ad host first) stays.
    The "Show" choice lasts until the popup closes, across its tabs.
-3. Settings in sections, checked in the real popup in Chrome.
+3. Settings in sections, checked in the real popup in Chrome. **Done 2026-11-23**: Downloads,
+   Subtitles, Detection, Appearance as `<section>` + `h2` (the Queue's header style); "Remove
+   finished tasks" moved up into Downloads; ids unchanged; unit and e2e tests check the order.
 4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
    line for "Show hidden".
 

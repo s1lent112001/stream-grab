@@ -119,3 +119,28 @@ describe('Settings: hide ads and previews (1.1.0)', () => {
     expect((local.data.get(STORAGE_KEYS.settings) as { hideJunk?: boolean } | undefined)?.hideJunk).toBe(false);
   });
 });
+
+describe('Settings: sections (1.1.0)', () => {
+  it('groups the rows under Downloads, Subtitles, Detection and Appearance, with Reset last', async () => {
+    await installPopupChrome();
+    const view = await render(SettingsPage, {});
+    unmount = () => view.root.unmount();
+    const sections = [...view.container.querySelectorAll('section')].map((section) => ({
+      title: section.querySelector('h2')?.textContent,
+      named: section.getAttribute('aria-labelledby') === section.querySelector('h2')?.id,
+      ids: [...section.querySelectorAll('[id$="-label"]')].map((label) => label.id.replace(/-label$/, '')),
+    }));
+    expect(sections).toEqual([
+      {
+        title: 'Downloads',
+        named: true,
+        ids: ['segment-concurrency', 'active-tasks', 'preferred-resolution', 'output-format', 'download-folder', 'auto-remove'],
+      },
+      { title: 'Subtitles', named: true, ids: ['subtitle-languages', 'subtitle-mode', 'subtitle-format'] },
+      { title: 'Detection', named: true, ids: ['auto-detect', 'hide-junk'] },
+      { title: 'Appearance', named: true, ids: ['theme'] },
+    ]);
+    const buttons = view.container.querySelectorAll('button');
+    expect(buttons[buttons.length - 1]?.textContent).toBe('Reset to defaults');
+  });
+});
