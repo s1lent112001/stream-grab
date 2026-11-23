@@ -18,7 +18,8 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.1.0 | Junk filter, Settings in sections (below) |
 | v1.2.0 | Video previews instead of the static icon (below) |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
-| v1.4.0 | Translations (`_locales`) and a gentle rating prompt (below) |
+| v1.4.0 | UI redesign: a simpler popup with fewer tabs, for every feature up to v1.3.0 (below) |
+| v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
 | Later | fMP4 `wvtt` subtitles (deferred from 0.7.0, again on 2026-11-23); no version yet |
 
 Not planned: DRM, SAMPLE-AES, live download of segments (v1.3.0 records the tab instead), an "always ask where to save" setting (Chrome's own
@@ -164,20 +165,20 @@ users take that role, through the Report a problem link). Order:
 A first review often asks for changes (permission wording, policy); fixing them during 0.9.x keeps
 1.0.0 free of that.
 
-## v1.1.0–v1.4.0: features after 1.0.0 (agreed 2026-11-20)
+## v1.1.0–v1.5.0: features after 1.0.0 (agreed 2026-11-20)
 
 One version at a time, each in user-approved phases (one session per phase, checks and e2e at the
-end of each phase). v1.1.0 to v1.3.0 are released on GitHub only (tag, CHANGELOG, ZIP); after
-v1.0.0 the store gets its next update with v1.4.0 (decided 2026-11-23), which carries every feature
-of v1.1.0 to v1.4.0 in one review. Fixes for serious bugs that store users report still go
-to the store as patch releases in between. Only v1.3.0 adds a permission (`tabCapture`), so the
-v1.4.0 review is the first one to see it.
+end of each phase). v1.1.0 to v1.4.0 are released on GitHub only (tag, CHANGELOG, ZIP); after
+v1.0.0 the store gets its next update with v1.5.0 (decided 2026-11-23, moved from v1.4.0 when the UI
+redesign was added), which carries every feature of v1.1.0 to v1.5.0 in one review. Fixes for
+serious bugs that store users report still go to the store as patch releases in between. Only
+v1.3.0 adds a permission (`tabCapture`), so the v1.5.0 review is the first one to see it.
 
 **Store listing.** The store search reads only the name, summary and description. Each version's
 release step updates the local listing draft for what it adds, in everyday words first and
 technical terms after (never a list of repeated keywords: the store rejects that as spam).
 v1.0.0 does the full search work; from then on every version adds the search words for its own
-features as part of its release step. The store sees the listing with v1.0.0 and then with v1.4.0,
+features as part of its release step. The store sees the listing with v1.0.0 and then with v1.5.0,
 so the listing never promises a feature the store version lacks.
 
 | Version | Name | Summary | Description |
@@ -186,7 +187,8 @@ so the listing never promises a feature the store version lacks.
 | v1.1.0 | Same | Same | Draft: "Show hidden" junk filter line |
 | v1.2.0 | Same | Same | Draft: a line on video previews (not a search term) |
 | v1.3.0 | Draft: **StreamGrab - Video Downloader & Recorder** | Draft: add "record" and "live streams" | Draft: a section on tab recording (what it saves, WebM, tab must stay open); remove "Live streams are not listed"; justification for `tabCapture` |
-| v1.4.0 (store) | The part after "StreamGrab" translated | Translated | Whole listing translated, with every feature up to v1.4.0 |
+| v1.4.0 | Same | Same | Draft: new screenshots and promo tiles of the redesigned popup |
+| v1.5.0 (store) | The part after "StreamGrab" translated | Translated | Whole listing translated, with every feature up to v1.5.0 |
 
 **v1.0.0: new repository and store search.** No feature change. In this order:
 
@@ -255,7 +257,7 @@ Phases (one session each, checks and e2e at the end of each):
    Subtitles, Detection, Appearance as `<section>` + `h2` (the Queue's header style); "Remove
    finished tasks" moved up into Downloads; ids unchanged; unit and e2e tests check the order.
 4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
-   line for "Show hidden". **Done 2026-11-23** (GitHub only; no store upload until v1.4.0).
+   line for "Show hidden". **Done 2026-11-23** (GitHub only; no store upload until v1.5.0).
 
 **v1.2.0: video previews.** A picture for each detected video instead of the static icon, in this
 order: (C) the `poster` of the page's `<video>`; (A) a frame of an MP4 / WebM file, read by a hidden
@@ -276,7 +278,16 @@ does a captured tab keep playing when its window is covered by other windows for
 warning (a new warning disables the extension for current users until they accept it). The store
 description and permission justifications change with it.
 
-**v1.4.0: translations and rating prompt.**
+**v1.4.0: UI redesign.** The popup's four tabs (Detected, Queue, Completed, Settings) plus the
+About page feel heavy. After previews (v1.2.0) and tab recording (v1.3.0), the whole popup is
+designed again for every feature, with fewer places to look (for example Queue and Completed as
+one Downloads list, Settings behind a button instead of a tab). Phase 1 presents a few directions
+(using the UI design skills and the existing design system) and the user picks one before any code
+changes. It comes before translations so the UI text, the screenshots and the store listing are
+made once, on the final UI.
+
+**v1.5.0: translations and rating prompt** (the next store update).
+
 
 - **Translations** of the UI and the store listing with `_locales`, Vietnamese first. The store
   searches each language's listing, so this is also search reach for people who search in their
