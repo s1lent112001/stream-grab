@@ -4,7 +4,7 @@ Browser extension (Chrome, Manifest V3) that detects, downloads and merges onlin
 entirely in the browser. No server, no native helper. It is built to support several streaming
 formats and protocols; see [Supported formats](#supported-formats) for what works today.
 
-Current version: **1.1.0** — see [CHANGELOG.md](CHANGELOG.md) and the
+Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md) and the
 [releases](https://github.com/s1lent112001/stream-grab/releases).
 
 Status: **all 10 phases done** (Phase 10: error handling, performance, testing). Streams are
@@ -28,7 +28,8 @@ page's Referer, by the extension. Besides unit and integration tests, an
 end-to-end test runs the built extension in Chrome for Testing (detection, Referer rules,
 download, FFmpeg, saving, resume after a browser restart). Since 1.1.0 the list hides likely ads,
 thumbnails and hover previews (a cautious filter; "N ads or previews hidden · Show" brings them
-back, and Settings > Detection turns it off), and Settings is split into sections. See
+back, and Settings > Detection turns it off), and Settings is split into sections. Since 1.2.0 each video shows a preview picture (the page's
+poster or current frame, or a frame made from the file or one segment) instead of the static icon. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, measurements and known limitations,
 and [docs/SPEC.md](docs/SPEC.md) for the requirements. The popup's look (the Claw design) is
 described in [docs/DESIGN.md](docs/DESIGN.md). Planned versions up to 1.0.0 are in

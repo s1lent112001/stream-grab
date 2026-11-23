@@ -1,6 +1,6 @@
 # StreamGrab privacy policy
 
-Last updated: 23 November 2026 (StreamGrab 1.0.0)
+Last updated: 23 November 2026 (StreamGrab 1.2.0)
 
 StreamGrab is a browser extension that saves the videos a web page plays. It runs entirely in
 your browser. It has no server, no account and no analytics, and **it does not collect, sell or
@@ -31,6 +31,8 @@ Everything stays on your computer, in the extension's own storage in your Chrome
   remove the task,
 - the list of saved videos shown in the Completed tab (title, the page and the video's address,
   quality, size, and where and when the file was saved), until you remove it,
+- small preview pictures of detected videos (about 100 pixels wide, kept for the videos of your
+  tasks and the most recent ones),
 - your settings.
 
 Saved videos go to your Downloads folder through Chrome's own downloads. Removing the extension
@@ -39,8 +41,9 @@ deletes everything it stored; the saved video files stay where Chrome saved them
 ## What StreamGrab sends, and to whom
 
 StreamGrab only connects to the sites a page itself loads video from: to read a detected video's
-manifest, the first bytes of a video file or a subtitle file, so the video can be listed, and to
-download the videos you pick. These requests carry the page's Referer and Origin and the
+manifest, the first bytes of a video file or a subtitle file, so the video can be listed, a
+picture the page gives for a video or a small part of the video to draw its preview (opening
+the popup may do this), and to download the videos you pick. These requests carry the page's Referer and Origin and the
 browser's own cookies for that site, as the page's player does, so the site serves them as it
 does to its own player. Nothing about you or your browsing is sent to the developer or to any
 third party.
@@ -58,7 +61,7 @@ Each permission the extension asks for, and why:
 | `declarativeNetRequestWithHostAccess` | Adds the page's Referer and Origin to the extension's own requests for a video, since many video servers refuse requests without them. Requests of web pages are never changed. |
 | `storage` | Keeps your settings, the videos detected in each tab and the download tasks. |
 | `unlimitedStorage` | Keeps downloaded segments until they are merged; a long video can be several gigabytes. |
-| `offscreen` | Runs the download engine and FFmpeg (WebAssembly) in an offscreen document. |
+| `offscreen` | Runs the download engine and FFmpeg (WebAssembly) in an offscreen document, and draws small video previews. |
 | `downloads` | Saves the finished video and its subtitles to your Downloads folder and shows them there. |
 | `notifications` | Tells you when a video is saved or a download fails. |
 | Host access to `http://*/*` and `https://*/*` | Any site can play a video: the extension must see a page's media requests and fetch the video from the site that hosts it. |

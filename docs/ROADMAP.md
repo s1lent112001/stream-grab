@@ -344,7 +344,7 @@ Phases (one session each, checks and e2e at the end of each):
    fixtures above (`/previews/*`) pass in Chrome for Testing 157 and 116 (WebM there; fMP4 gets
    the icon without H.264); every source made its picture in a real browser, no maker needed a fix.
 4. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
-   draft line (GitHub only; no store upload until v1.5.0).
+   draft line (GitHub only; no store upload until v1.5.0). **Done 2026-11-23.**
 
 **v1.3.0: tab recording.** "Record this tab" saves what the tab plays, for live streams and for
 players that hide their segment addresses. `chrome.tabCapture` + `MediaRecorder` in the offscreen

@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-23
+
+### Added
+
+- Video previews: each detected video shows a picture instead of the static icon, in Detected,
+  Queue and Completed. The picture is the first of: the `poster` of the page's `<video>`; the frame
+  the page's own player shows now; a frame at about 10% of the length, made from an MP4 / WebM
+  file or from one segment of an HLS / DASH stream with fMP4 segments; a picture the page declares
+  for the video (a schema.org `VideoObject` `thumbnailUrl`, or `og:image` of a video page); else
+  the icon. Previews are made when a row becomes visible and cached; a DRM stream gets only a
+  picture the page gives. HLS with MPEG-TS segments, live streams and encrypted streams (other
+  than AES-128) keep the icon unless the page gives a picture.
+- No new permission and no setting: previews are always on.
+
+### Fixed
+
+- A preview is found for an MSE player placed after an empty ad-slot `<video>`.
+- Every `EXT-X-MEDIA` playlist of an HLS master is folded into it.
+
 ## [1.1.0] - 2026-11-23
 
 ### Added

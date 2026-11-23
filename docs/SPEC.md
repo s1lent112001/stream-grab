@@ -126,6 +126,9 @@ pending, downloading, processing, completed and failed.
   selection; Download button. Likely ads, thumbnails and hover previews are hidden by a cautious
   filter (known ad host, or short plus one weak signal; never live streams or videos of a minute
   or more); a "N ads or previews hidden · Show" line brings them back until the popup closes.
+  Each video shows a preview picture (page poster, the player's current frame, a frame made from
+  the file or one segment, or a picture the page declares for the video) instead of the icon;
+  DRM streams get only a picture the page gives, and no FFmpeg is used for previews.
 - Download Queue: active downloads; progress %; downloaded/total segments; speed where
   measurable; retry and error status; cancellation.
 - Completed: output filename and file size.
