@@ -61,6 +61,7 @@ export function buildHlsManifest(
     ...top.variants.map((variant) => variant.hls?.playlistUrl),
     ...top.audioTracks.map((track) => track.hls?.playlistUrl),
     ...top.subtitleTracks.map((track) => track.hls?.playlistUrl),
+    ...top.renditionUrls,
     ...top.iFrameUrls,
   ].filter((url): url is string => url !== undefined);
   const manifest: StreamingManifest = {

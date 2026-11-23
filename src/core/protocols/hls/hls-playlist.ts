@@ -14,7 +14,7 @@ import {
 import { SegmentListBuilder, type MediaFields } from '@/core/protocols/segment-builder';
 import { errorMessage, StreamGrabError } from '@/shared/utils/errors';
 import { resolveHttpUrl } from '@/shared/utils/url';
-import { ivFromMediaSequence, ivFromWords, resolveKeyUrl, scanHlsKeys, type KeyScan } from './hls-keys';
+import { ivFromMediaSequence, ivFromWords, parseAttributeList, resolveKeyUrl, scanHlsKeys, type KeyScan } from './hls-keys';
 
 /**
  * Normalises HLS playlists (parsed by m3u8-parser) into StreamGrab's models.
@@ -39,6 +39,12 @@ export interface ParsedMasterPlaylist {
   /** WebVTT renditions (TYPE=SUBTITLES); CLOSED-CAPTIONS (CEA-608 in the video) are not listed. */
   subtitleTracks: SubtitleTrack[];
   iFrameUrls: string[];
+  /**
+   * URI of every EXT-X-MEDIA rendition, in order. The parser keeps one rendition per GROUP-ID and
+   * NAME, so two renditions named alike (a Bradmax master: two "Audio" of one group, 128k and 256k)
+   * list only the last as a track; this list still has both, so neither is shown as its own stream.
+   */
+  renditionUrls: string[];
   keys: KeyScan;
 }
 
@@ -85,10 +91,22 @@ export function parseHlsPlaylist(text: string, url: string): ParsedPlaylist {
 
   const manifest = runParser(body, url);
   const keys = scanHlsKeys(body);
-  return isMaster ? toMaster(manifest, url, keys) : toMedia(manifest, url, keys);
+  return isMaster ? toMaster(manifest, url, keys, renditionUrls(body, url)) : toMedia(manifest, url, keys);
 }
 
-function toMaster(manifest: Manifest, url: string, keys: KeyScan): ParsedMasterPlaylist {
+/** URIs of the playlist's EXT-X-MEDIA tags (resolved, http(s) only, each once). */
+function renditionUrls(body: string, url: string): string[] {
+  const urls = new Set<string>();
+  for (const match of body.matchAll(/^#EXT-X-MEDIA:(.*)$/gm)) {
+    if (urls.size >= HLS_LIMITS.maxAudioTracks + HLS_LIMITS.maxSubtitleTracks) break;
+    const uri = parseAttributeList(match[1] ?? '').get('URI');
+    const resolved = uri === undefined ? null : resolveHttpUrl(uri, url);
+    if (resolved !== null) urls.add(resolved);
+  }
+  return [...urls];
+}
+
+function toMaster(manifest: Manifest, url: string, keys: KeyScan, renditionUrls: string[]): ParsedMasterPlaylist {
   const audioTracks: AudioTrack[] = [];
   for (const [groupId, members] of Object.entries(manifest.mediaGroups?.['AUDIO'] ?? {})) {
     for (const [name, rendition] of Object.entries(members)) {
@@ -157,7 +175,7 @@ function toMaster(manifest: Manifest, url: string, keys: KeyScan): ParsedMasterP
     .map((playlist) => resolveHttpUrl(playlist.uri, url))
     .filter((resolved): resolved is string => resolved !== null);
 
-  return { kind: 'master', url, variants, audioTracks, subtitleTracks, iFrameUrls, keys };
+  return { kind: 'master', url, variants, audioTracks, subtitleTracks, iFrameUrls, renditionUrls, keys };
 }
 
 /** TYPE=SUBTITLES renditions; URI is mandatory for them, so one without a usable URI is skipped. */

@@ -6,6 +6,7 @@ import { ProtocolRegistry } from '@/core/protocols/protocol-adapter';
 import { StreamGrabError } from '@/shared/utils/errors';
 import hlsMasterFairplay from '@tests/fixtures/manifests/hls/master-fairplay.m3u8?raw';
 import hlsMasterMuxed from '@tests/fixtures/manifests/hls/master-muxed-audio.m3u8?raw';
+import hlsMasterSameName from '@tests/fixtures/manifests/hls/master-same-name-audio.m3u8?raw';
 import hlsMaster from '@tests/fixtures/manifests/hls/master.m3u8?raw';
 import hlsFmp4 from '@tests/fixtures/manifests/hls/media-fmp4.m3u8?raw';
 import hlsLive from '@tests/fixtures/manifests/hls/media-live.m3u8?raw';
@@ -108,6 +109,13 @@ describe('HlsAdapter', () => {
       expect((await adapter.getAvailableVariants(manifest)).map((v) => v.height)).toEqual([1080, 720, 360]);
       expect(manifest.childUrls).toContain(AUDIO_FR);
       expect(site.requests).toEqual([MASTER, V1080]);
+    });
+
+    it('counts every audio rendition as a child, also two named alike (not listed as their own streams)', async () => {
+      const base = 'https://site.example/video/tos/';
+      const site = createSite({ [`${base}440272.m3u8`]: hlsMasterSameName, [`${base}video_0_1536000_hls.m3u8`]: hlsTs });
+      const manifest = await new HlsAdapter({ fetcher: site.fetcher }).parseManifest(`${base}440272.m3u8`);
+      expect(manifest.childUrls).toEqual(expect.arrayContaining([`${base}audio_0_128000_hls.m3u8`, `${base}audio_0_256000_hls.m3u8`]));
     });
 
     it('adds the default audio track, an explicit one, or none', async () => {

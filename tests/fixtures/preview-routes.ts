@@ -8,7 +8,9 @@
  * - `player`:       a playing MSE player (no http `src`) of an HLS fMP4 stream: the content script
  *                   draws the frame it shows;
  * - `ad-slot`:      the same player after an empty ad-slot `<video>` (Bradmax), of an HLS MPEG-TS
- *                   stream, so only the player's frame can give a picture;
+ *                   stream, so only the player's frame can give a picture; its master names two
+ *                   audio renditions alike and the page loads the first (Bradmax again): the page
+ *                   still lists one video;
  * - `file`:         a file from another site (127.0.0.1 ↔ localhost) without CORS, playing: the
  *                   content script's canvas is locked, so the offscreen document makes a frame
  *                   (403 without a local page as Referer: the hidden video needs the `media` rule);
@@ -113,6 +115,8 @@ const FMP4_CASES = new Set<PreviewCaseName>(['player', 'hls-fmp4', 'dash']);
 const HLS = 'application/vnd.apple.mpegurl';
 const HTML = 'text/html; charset=utf-8';
 const AUDIO = 'audio';
+/** The `ad-slot` master's other audio rendition, the one its player loads (1.2.0). */
+const AD_SLOT_AUDIO = 'audio-low';
 const MP4_TYPE = `video/mp4; codecs="${H264_CODEC}"`;
 
 function html(title: string, body: string, head = ''): string {
@@ -140,6 +144,7 @@ ${adSlot ? `<video class="ad-slot" style="${fill}"></video>` : ''}
 <script>${H264}
 (async () => {
   await fetch('${page(name)}/master.m3u8').then((r) => r.text());
+  ${adSlot ? `await fetch('${page(name)}/${AD_SLOT_AUDIO}/index.m3u8').then((r) => r.text());` : ''}
   document.body.dataset.stream = '${page(name)}/master.m3u8';
   const video = document.getElementById('v');
   const source = new MediaSource();
@@ -253,12 +258,18 @@ export function createPreviewRouter(
   const forbidden: FixtureResponse = { status: 403, contentType: 'text/plain', body: 'HTTP 403' };
   const videos = media.options.video;
   const kind = (name: PreviewCaseName) => (FMP4_CASES.has(name) ? media.fmp4 : media.ts);
-  const rendition = (name: PreviewCaseName, id: string): Rendition | undefined => (id === AUDIO ? kind(name).audio : kind(name).video[id]);
-  const master = (name: PreviewCaseName) =>
-    hlsMasterPlaylist(
+  const rendition = (name: PreviewCaseName, id: string): Rendition | undefined =>
+    id === AUDIO || (name === 'ad-slot' && id === AD_SLOT_AUDIO) ? kind(name).audio : kind(name).video[id];
+  const master = (name: PreviewCaseName) => {
+    const text = hlsMasterPlaylist(
       videos.map((video) => ({ uri: `${video.name}/index.m3u8`, width: video.width, height: video.height, rendition: kind(name).video[video.name] as Rendition })),
       { uri: `${AUDIO}/index.m3u8`, name: 'English', language: 'en', rendition: kind(name).audio },
     );
+    if (name !== 'ad-slot') return text;
+    // As Bradmax's master: a second audio rendition named like the first, listed before it.
+    const audio = text.split('\n').find((line) => line.startsWith('#EXT-X-MEDIA:TYPE=AUDIO')) ?? '';
+    return text.replace(audio, `${audio.replace(`${AUDIO}/index.m3u8`, `${AD_SLOT_AUDIO}/index.m3u8`)}\n${audio}`);
+  };
   const mpd = dashManifest(
     videos.map((video) => ({ id: video.name, width: video.width, height: video.height, rendition: media.fmp4.video[video.name] as Rendition })),
     { id: AUDIO, language: 'en', rendition: media.fmp4.audio },

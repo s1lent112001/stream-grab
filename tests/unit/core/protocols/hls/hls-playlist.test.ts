@@ -8,6 +8,7 @@ import {
 } from '@/core/protocols/hls/hls-playlist';
 import { StreamGrabError } from '@/shared/utils/errors';
 import hlsMasterMuxed from '@tests/fixtures/manifests/hls/master-muxed-audio.m3u8?raw';
+import hlsMasterSameName from '@tests/fixtures/manifests/hls/master-same-name-audio.m3u8?raw';
 import hlsMaster from '@tests/fixtures/manifests/hls/master.m3u8?raw';
 import hlsByteRange from '@tests/fixtures/manifests/hls/media-byterange-ts.m3u8?raw';
 import hlsDiscontinuity from '@tests/fixtures/manifests/hls/media-discontinuity.m3u8?raw';
@@ -96,6 +97,20 @@ describe('parseHlsPlaylist: multivariant playlists', () => {
       },
     ]);
     expect(master(hlsMaster).iFrameUrls).toEqual(['https://cdn.example.com/vod/movie/video/1080p/iframe_index.m3u8']);
+  });
+
+  it('keeps the URI of every rendition, also of two named alike in one group (one track each name)', () => {
+    // Bradmax: two "Audio" renditions of one group; the parser keeps the last as the track.
+    const parsed = master(hlsMasterSameName, 'https://site.example/video/tos/440272.m3u8');
+    expect(parsed.audioTracks.map((track) => track.hls?.playlistUrl)).toEqual(['https://site.example/video/tos/audio_0_256000_hls.m3u8']);
+    expect(parsed.renditionUrls).toEqual([
+      'https://site.example/video/tos/audio_0_128000_hls.m3u8',
+      'https://site.example/video/tos/audio_0_256000_hls.m3u8',
+    ]);
+    expect(master(hlsMaster).renditionUrls).toEqual([
+      'https://cdn.example.com/vod/movie/audio/en/prog_index.m3u8',
+      'https://cdn.example.com/vod/movie/audio/fr/prog_index.m3u8',
+    ]);
   });
 
   it('recognises muxed audio (no URI), audio-only variants and variants without a resolution', () => {

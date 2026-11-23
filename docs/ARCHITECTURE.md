@@ -200,7 +200,11 @@ content script: <video>/<source> manifests ──▶ content/domSources ──�
    `dedupeKey` (URL without signed-URL tokens, expiry stamps and cache busters); a re-request
    updates the URL and context to the freshest ones. Variant and rendition playlists of an
    inspected master are removed from the list and ignored afterwards, whichever order they
-   arrive in, so a player loading 1 master + N playlists shows one video.
+   arrive in, so a player loading 1 master + N playlists shows one video. A master's children are
+   read from every `EXT-X-MEDIA` `URI` too (1.2.0): `m3u8-parser` keeps one rendition per
+   `GROUP-ID` and `NAME`, and a Bradmax master names its 128k and 256k audio both "Audio", so the
+   128k playlist its player loads was listed as a second stream (the audio tracks offered still
+   come from the parser: the last of two alike).
    **Live manifests are not listed** (0.4.0, see *Version 0.4.0* below): a live player reloads
    its playlist every few seconds, often with a query `dedupeKey` keeps.
 5. **Statuses.** `pending` → `ready` | `drm` (never downloaded, reason shown) | `error` (HTTP
@@ -1486,7 +1490,8 @@ Wired by Phase 3 (below).
 - **End-to-end** (Phase 3b, `tests/fixtures/preview-routes.ts`, the fixture site's `/previews/*`):
   one page per source, each with its own stream, in Chrome for Testing 157 and 116. Each preview
   comes from the expected source (poster, player frame of an MSE player, also of one after an empty
-  ad-slot `<video>` playing an HLS MPEG-TS stream, file frame of a file from
+  ad-slot `<video>` playing an HLS MPEG-TS stream whose master names two audio renditions alike,
+  the page listing one video, file frame of a file from
   another site whose canvas is locked, segment frame of HLS fMP4 and DASH, page picture of a
   `VideoObject` and of a video page's `og:image`), is at most 104 × 104 and 32 KB and is not a
   blank frame; HLS MPEG-TS and an article's `og:image` give the icon (a cached failure). Page

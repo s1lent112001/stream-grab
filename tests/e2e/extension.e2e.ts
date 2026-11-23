@@ -1024,6 +1024,16 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       const { tabId, streams } = await detected(ext, pageUrl, [streamPath]);
       const stream = streams[0];
       if (!stream) throw new Error(`no stream on ${item.path}`);
+      if (item.name === 'ad-slot') {
+        // The audio playlist the player loads belongs to the master, though the parser keeps one rendition per name.
+        const listed = () =>
+          ext.evaluate(async (key) => {
+            const stored = (await chrome.storage.session.get(key))[key] as { streams: DetectedStream[] } | undefined;
+            return (stored?.streams ?? []).map((candidate) => new URL(candidate.url).pathname);
+          }, `detections:${tabId}`);
+        await new Promise((done) => setTimeout(done, 1_000));
+        expect(await listed()).toEqual([streamPath]);
+      }
       results[item.name] = await askPreview(ext, tabId, stream.id);
       // Without H.264 (Chrome 116) no fMP4 segment plays in MSE: the icon.
       const source = item.expected === 'segment-frame' && !h264 ? null : item.expected;
