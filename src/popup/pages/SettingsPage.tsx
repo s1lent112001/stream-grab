@@ -17,6 +17,7 @@ import {
 } from '@/shared/settings/settings';
 import { isOneOf } from '@/shared/utils/guards';
 import { BUTTON } from '../components/buttons';
+import { Icon } from '../components/Icon';
 import { Segmented } from '../components/Segmented';
 import { Select } from '../components/Select';
 import { SettingRow } from '../components/SettingRow';
@@ -215,14 +216,59 @@ function SubtitleLanguagesInput({ value, onSave }: { value: string; onSave: (lan
   );
 }
 
-/** One group of settings: a heading, then its rows. One scrolling page, no tabs or accordions. */
+const COLLAPSED_KEY = 'streamgrab.settings.collapsed';
+
+function readCollapsed(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCollapsed(ids: string[]): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(ids));
+  } catch {
+    // Remembering the choice is a convenience only.
+  }
+}
+
+/**
+ * One group of settings: a heading that folds the group, then its rows. One scrolling page, no tabs.
+ * Folded content stays in the DOM (`hidden`) so every input keeps its state and id.
+ */
 function SettingsSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(() => !readCollapsed().includes(id));
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    const others = readCollapsed().filter((item) => item !== id);
+    writeCollapsed(next ? others : [...others, id]);
+  };
+
   return (
-    <section aria-labelledby={id} className="pt-4">
-      <h2 id={id} className="font-bold text-muted">
-        {title}
+    <section aria-labelledby={id} className="mt-4 border-b border-line pb-1">
+      <h2 id={id}>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`${id}-body`}
+          onClick={toggle}
+          className="flex w-full cursor-pointer items-center justify-between rounded-field bg-surface px-3 py-2 text-left text-[14px] font-bold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-strong"
+        >
+          {title}
+          <Icon
+            name="chevron"
+            className={`size-[14px] shrink-0 text-muted transition-transform duration-150 motion-reduce:transition-none ${open ? '' : '-rotate-90'}`}
+          />
+        </button>
       </h2>
-      <div className="divide-y divide-line">{children}</div>
+      <div id={`${id}-body`} hidden={!open} className="divide-y divide-line px-1">
+        {children}
+      </div>
     </section>
   );
 }

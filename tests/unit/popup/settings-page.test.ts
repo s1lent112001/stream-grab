@@ -143,4 +143,22 @@ describe('Settings: sections (1.1.0)', () => {
     const buttons = view.container.querySelectorAll('button');
     expect(buttons[buttons.length - 1]?.textContent).toBe('Reset to defaults');
   });
+  it('folds a section with its heading button and remembers it', async () => {
+    localStorage.removeItem('streamgrab.settings.collapsed');
+    await installPopupChrome();
+    const view = await render(SettingsPage, {});
+    unmount = () => view.root.unmount();
+    const heading = view.container.querySelector<HTMLButtonElement>('#settings-subtitles button');
+    const body = view.container.querySelector<HTMLElement>('#settings-subtitles-body');
+    expect(heading?.getAttribute('aria-expanded')).toBe('true');
+    expect(body?.hidden).toBe(false);
+    await click(view.container, 'Subtitles');
+    expect(heading?.getAttribute('aria-expanded')).toBe('false');
+    expect(body?.hidden).toBe(true);
+    expect(view.container.querySelector('#subtitle-mode')).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem('streamgrab.settings.collapsed') ?? '[]')).toEqual(['settings-subtitles']);
+    await click(view.container, 'Subtitles');
+    expect(body?.hidden).toBe(false);
+    expect(localStorage.getItem('streamgrab.settings.collapsed')).toBe('[]');
+  });
 });
