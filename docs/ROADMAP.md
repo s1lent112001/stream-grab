@@ -255,7 +255,7 @@ Phases (one session each, checks and e2e at the end of each):
    Subtitles, Detection, Appearance as `<section>` + `h2` (the Queue's header style); "Remove
    finished tasks" moved up into Downloads; ids unchanged; unit and e2e tests check the order.
 4. Regression, docs (CHANGELOG, README, SPEC), version 1.1.0, ZIP, GitHub Release, listing draft
-   line for "Show hidden".
+   line for "Show hidden". **Done 2026-11-23** (GitHub only; no store upload until v1.4.0).
 
 **v1.2.0: video previews.** A picture for each detected video instead of the static icon, in this
 order: (C) the `poster` of the page's `<video>`; (A) a frame of an MP4 / WebM file, read by a hidden

@@ -122,13 +122,16 @@ clear completion notification.
 Clean, modern popup, usable within Chrome's popup dimensions, with clear visual states for
 pending, downloading, processing, completed and failed.
 
-- Detected Videos: all detected sources with protocol and quality; individual or multiple
-  selection; Download button.
+- Detected Videos: detected sources with protocol and quality; individual or multiple
+  selection; Download button. Likely ads, thumbnails and hover previews are hidden by a cautious
+  filter (known ad host, or short plus one weak signal; never live streams or videos of a minute
+  or more); a "N ads or previews hidden · Show" line brings them back until the popup closes.
 - Download Queue: active downloads; progress %; downloaded/total segments; speed where
   measurable; retry and error status; cancellation.
 - Completed: output filename and file size.
-- Settings: maximum concurrent downloads; default video resolution; output format; automatically
-  detect videos; automatically remove completed tasks from the queue.
+- Settings, in sections (Downloads, Subtitles, Detection, Appearance): maximum concurrent
+  downloads; default video resolution; output format; automatically remove completed tasks from
+  the queue; automatically detect videos; hide ads and previews.
 
 ## 3. Architecture
 

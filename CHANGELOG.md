@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-23
+
+### Added
+
+- Junk filter: likely ads, thumbnails, sprite sheets and hover previews are no longer listed. A
+  video is hidden when it comes from a known ad host, or when it is short and has one more weak
+  signal (a path word such as `thumb` or `preview`, a small file, or a low picture). Live streams,
+  videos of a minute or more and a page's best guess at its main video are never hidden.
+- The popup shows "N ads or previews hidden · Show" to list them until it closes; shown ones are
+  tagged "Likely an ad" or "Likely a preview". The toolbar badge and Select all count only listed
+  videos, and the popup says so when a page has only ads or previews.
+- Setting "Hide ads and previews" (Settings > Detection, on by default).
+- The length of an MP4 / WebM file is read from its first bytes (no extra request) and shown in the
+  popup and the Completed tab.
+
+### Changed
+
+- Settings is grouped into Downloads, Subtitles, Detection and Appearance sections. "Remove
+  finished tasks" moved into Downloads.
+
 ## [1.0.0] - 2026-11-23
 
 ### Changed
