@@ -1,6 +1,6 @@
 # StreamGrab privacy policy
 
-Last updated: 23 November 2026 (StreamGrab 1.2.0)
+Last updated: 23 November 2026 (StreamGrab 1.2.1)
 
 StreamGrab is a browser extension that saves the videos a web page plays. It runs entirely in
 your browser. It has no server, no account and no analytics, and **it does not collect, sell or
@@ -16,8 +16,10 @@ share any data about you**.
 - **The page itself, through a content script.** On every http(s) page it reads the page title
   and the page's title metadata (social and structured-data tags), the `<video>`, `<source>` and
   `<track>` elements with their labels, size and duration, and the subtitle cues a player holds,
-  so a video can be listed with a useful name and the right subtitles. It does not read what you
-  type, and it never runs code from the page.
+  so a video can be listed with a useful name and the right subtitles. It notices when the page
+  moves to another address without loading a new page (Back, Forward, a site that changes pages
+  itself) and when you last clicked or pressed a key there, only to tell which videos belong to
+  which page. It does not read what you type or click, and it never runs code from the page.
 
 YouTube sites are excluded: StreamGrab does not run on them and does not detect or download their
 videos.
@@ -65,7 +67,7 @@ Each permission the extension asks for, and why:
 | `downloads` | Saves the finished video and its subtitles to your Downloads folder and shows them there. |
 | `notifications` | Tells you when a video is saved or a download fails. |
 | Host access to `http://*/*` and `https://*/*` | Any site can play a video: the extension must see a page's media requests and fetch the video from the site that hosts it. |
-| Content script on http(s) pages | Reads the page title and the page's video, source and track elements so detected videos get a name, a duration and the right subtitles. It never runs page code and is not injected on YouTube. |
+| Content script on http(s) pages | Reads the page title and the page's video, source and track elements so detected videos get a name, a duration and the right subtitles, and notices when the page moves to another address without loading, so each page lists its own videos. It never runs page code and is not injected on YouTube. |
 
 ## Children
 

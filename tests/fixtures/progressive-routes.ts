@@ -120,6 +120,50 @@ document.getElementById('ad').append(ad);
 </body></html>`;
 }
 
+/**
+ * Back and Forward (1.2.1): a single-page site whose pages each play one video (/files/history/watch/N,
+ * another page opened with history.pushState, Back and Forward with popstate) and a page without
+ * a video. They may be kept in Chrome's back/forward cache: no `no-store`.
+ */
+export const HISTORY_WATCH_PATH = '/files/history/watch';
+export const HISTORY_PLAIN_PATH = '/files/history/plain';
+export const historyVideoPath = (n: number): string => `/files/history/video-${n}.mp4`;
+
+function historyWatchPage(): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>StreamGrab single-page site</title></head>
+<body style="font:14px system-ui;max-width:760px;margin:24px auto;line-height:1.4">
+<h1 id="heading"></h1>
+<p>Each page of this site plays its own video; <button onclick="openVideo(2)">Video 2</button> opens another page without loading a new document.
+After Back and Forward the popup should list only the video of the page shown.</p>
+<div id="player"></div>
+<script>
+function show() {
+  const n = location.pathname.split('/').pop();
+  document.getElementById('heading').textContent = 'Video ' + n;
+  const video = document.createElement('video');
+  video.title = 'Video ' + n;
+  video.muted = true;
+  video.preload = 'auto';
+  video.width = 320;
+  video.src = '/files/history/video-' + n + '.mp4';
+  document.getElementById('player').replaceChildren(video);
+}
+window.openVideo = (n) => {
+  history.pushState({}, '', '${HISTORY_WATCH_PATH}/' + n);
+  show();
+};
+addEventListener('popstate', show);
+show();
+</script>
+</body></html>`;
+}
+
+const HISTORY_PLAIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>StreamGrab page without a video</title></head>
+<body style="font:14px system-ui"><p>No video here. Go Back: the popup should list the video of the page before again.</p></body></html>`;
+
+/** Pages Chrome may keep in its back/forward cache. */
+const CACHEABLE_PAGE = { 'cache-control': 'no-cache' };
+
 const CONTENT_TYPES = { mp4: 'video/mp4', webm: 'video/webm' } as const;
 
 function page(): string {
@@ -206,6 +250,11 @@ export function createProgressiveRouter(files: SyntheticFiles): (pathname: strin
       const response = serveFile(slowProtected, 'video/mp4', range);
       return { ...response, headers: { ...response.headers, etag: SLOW_PROTECTED_ETAG }, bytesPerSecond: SLOW_PROTECTED_RATE };
     }
+    if (pathname.startsWith(`${HISTORY_WATCH_PATH}/`)) {
+      return { status: 200, contentType: 'text/html; charset=utf-8', body: historyWatchPage(), headers: CACHEABLE_PAGE };
+    }
+    if (pathname === HISTORY_PLAIN_PATH) return { status: 200, contentType: 'text/html; charset=utf-8', body: HISTORY_PLAIN_PAGE, headers: CACHEABLE_PAGE };
+    if (/^\/files\/history\/video-\d+\.mp4$/.test(pathname)) return serveFile(files.mp4FastStart, 'video/mp4', request?.range);
     if (pathname === JUNK_PAGE_PATH) return { status: 200, contentType: 'text/html; charset=utf-8', body: junkPage() };
     if (pathname === JUNK_PREVIEW_PATH || pathname === JUNK_AD_PATH) return serveFile(files.mp4FastStart, 'video/mp4', request?.range);
     if (pathname === MSE_SEGMENT_PATH) return serveFile(files.mp4Fragmented, 'video/mp4', request?.range);

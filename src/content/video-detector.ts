@@ -64,6 +64,8 @@ export function findDomSources(root: ParentNode, baseUrl: string): DomSource[] {
 }
 
 export interface DomSourceWatcher {
+  /** The tab moved to another page (1.2.1): its list starts over, so every source is reported again. */
+  reportAgain(): void;
   stop(): void;
 }
 
@@ -100,6 +102,11 @@ export function watchDomSources(
   scan();
 
   return {
+    reportAgain() {
+      reported.clear();
+      // A page back from the back/forward cache changes nothing in the DOM: scan without waiting for a mutation.
+      timer ??= setTimeout(scan, debounceMs);
+    },
     stop() {
       observer.disconnect();
       clearTimeout(timer);

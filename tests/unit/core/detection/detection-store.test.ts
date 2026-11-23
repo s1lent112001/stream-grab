@@ -41,6 +41,19 @@ describe('SessionDetectionStore', () => {
 });
 
 describe('parseStoredTabDetections', () => {
+  it('keeps the list key and the remembered pages, dropping unusable pages and the oldest beyond 8 (1.2.1)', () => {
+    const page = (n: number) => ({ key: `https://site.example/watch/${n}`, streams: [stream] });
+    const parsed = parseStoredTabDetections({
+      ...record,
+      listKey: 'https://site.example/watch/0',
+      pages: [{ key: 7, streams: [] }, { key: 'https://site.example/x' }, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(page)],
+    });
+    expect(parsed?.listKey).toBe('https://site.example/watch/0');
+    expect(parsed?.pages?.map((kept) => kept.key)).toEqual([2, 3, 4, 5, 6, 7, 8, 9].map((n) => `https://site.example/watch/${n}`));
+    expect(parsed?.pages?.[0]?.streams).toEqual([stream]);
+    expect(parseStoredTabDetections(record)?.pages).toBeUndefined();
+  });
+
   it('rejects unusable records', () => {
     for (const raw of [undefined, null, 'x', { version: 2, tabId: 1, generation: 0, streams: [] }, { version: 1, streams: [] }]) {
       expect(parseStoredTabDetections(raw)).toBeNull();

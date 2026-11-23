@@ -20,6 +20,9 @@ import { LIVE_PAGE_PATH, LIVE_PATH, LIVE_RELOADS, LIVE_VOD_PATH } from '@tests/f
 import { syntheticFiles } from '@tests/fixtures/media/synthetic-files';
 import { PREVIEW_CASES, previewPicturePath, type PreviewCaseName } from '@tests/fixtures/preview-routes';
 import {
+  HISTORY_PLAIN_PATH,
+  HISTORY_WATCH_PATH,
+  historyVideoPath,
   JUNK_AD_HOST,
   JUNK_AD_PATH,
   JUNK_PAGE_PATH,
@@ -1081,6 +1084,50 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       await popup.close();
     }
     await posterTab.page.close();
+    await ext.close();
+  });
+
+  it('lists only the videos of the page shown after Back and Forward: a single-page site and the back/forward cache (1.2.1)', async () => {
+    const page = await browser.newPage();
+    await page.goto(`${site.origin}${HISTORY_WATCH_PATH}/1`);
+    const ext = await extensionPage();
+    const { tabId } = await detected(ext, `${site.origin}${HISTORY_WATCH_PATH}/1`, [historyVideoPath(1)]);
+    /** Waits until the tab lists exactly these files, inspected. */
+    const listIs = (step: string, paths: string[]) =>
+      waitFor(
+        `the list after ${step}: ${paths.join(', ') || 'empty'}`,
+        async () => {
+          const streams = await ext.evaluate(async (key) => ((await chrome.storage.session.get(key))[key] as { streams: DetectedStream[] } | undefined)?.streams ?? [], `detections:${tabId}`);
+          const listed = streams.map((stream) => new URL(stream.url).pathname).sort();
+          return listed.join() === [...paths].sort().join() && streams.every((stream) => stream.status === 'ready') ? true : undefined;
+        },
+        15_000,
+      );
+
+    // The player keeps its position in the URL; the site opens its second page without loading a
+    // new document, then Back (to the replaced URL) and Forward.
+    await page.evaluate(() => {
+      history.replaceState({}, '', `${location.pathname}?t=1`);
+      (window as unknown as { openVideo: (n: number) => void }).openVideo(2);
+    });
+    await listIs('a page opened by the site', [historyVideoPath(2)]);
+    await page.goBack();
+    await listIs('Back', [historyVideoPath(1)]);
+    await page.goForward();
+    await listIs('Forward', [historyVideoPath(2)]);
+
+    // A page without a video, then Back: Chrome shows the page before from its back/forward cache,
+    // without a request the service worker could see.
+    await page.evaluate(() => {
+      (window as unknown as { kept: boolean }).kept = true;
+      history.replaceState({}, '', `${location.pathname}?t=2`);
+    });
+    await page.goto(`${site.origin}${HISTORY_PLAIN_PATH}`);
+    await listIs('a page without a video', []);
+    await page.goBack();
+    expect(await page.evaluate(() => (window as unknown as { kept?: boolean }).kept)).toBe(true);
+    await listIs('Back from the back/forward cache', [historyVideoPath(2)]);
+    await page.close();
     await ext.close();
   });
 

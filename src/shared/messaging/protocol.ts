@@ -2,6 +2,7 @@ import type { StartDownloadsResult } from '@/core/download/task-service';
 import type { RequestContext } from '@/core/models/detected-stream';
 import type { DownloadRequest, EngineReport, EngineWork, MediaReport, SaveRequest } from '@/core/models/download-task';
 import type { PreviewMakeRequest, PreviewMakeResult } from '@/core/preview/preview-job';
+import type { PageChange } from '@/shared/types/page-change';
 import type { DomSource, FrameMetadata, PlayerFrameRequest, PlayerFrameResult } from '@/shared/types/page-metadata';
 import type { PageTextTrack } from '@/shared/types/text-tracks';
 import { isRecord } from '@/shared/utils/guards';
@@ -49,6 +50,8 @@ export type BackgroundContract = {
   'detections/clear': Exchange<{ tabId: number }, undefined>;
   /** Content script: manifest URLs referenced by <video>/<source> elements (validated by the receiver). */
   'content/domSources': Exchange<{ sources: DomSource[] }, undefined>;
+  /** Content script (top frame, 1.2.1): the tab moved to another page without loading a new document. */
+  'content/pageChanged': Exchange<PageChange, undefined>;
   /** Popup: queue downloads; each request succeeds or fails on its own. */
   'downloads/start': Exchange<{ requests: DownloadRequest[] }, StartDownloadsResult>;
   /** Popup: remove tasks that are not running. */

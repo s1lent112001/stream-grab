@@ -90,6 +90,17 @@ describe('watchDomSources', () => {
     expect(reports).toHaveLength(2);
     watcher.stop();
   });
+
+  it('reports every source again when the tab moved to another page, without waiting for a DOM change (1.2.1)', async () => {
+    document.body.innerHTML = '<video src="https://cdn.example/one.m3u8"></video>';
+    const reports: string[][] = [];
+    const watcher = watchDomSources(document, (sources) => reports.push(sources.map((source) => source.url)), 10);
+    watcher.reportAgain();
+    await vi.waitFor(() => {
+      expect(reports).toEqual([['https://cdn.example/one.m3u8'], ['https://cdn.example/one.m3u8']]);
+    });
+    watcher.stop();
+  });
 });
 
 describe('parseDomSources', () => {

@@ -17,6 +17,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.0.0 | After 2–3 weeks on the store without serious bugs (checks and e2e pass on the newest Chrome and Chrome 116); new repository, store search (name, summary, description) done in full, uploaded to the store (below); no feature change |
 | v1.1.0 | Junk filter, Settings in sections (below) |
 | v1.2.0 | Video previews instead of the static icon (below) |
+| v1.2.1 | Fix: after Back/Forward and on single-page sites the list showed videos of other pages |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | UI redesign: a simpler popup with fewer tabs, for every feature up to v1.3.0 (below) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |

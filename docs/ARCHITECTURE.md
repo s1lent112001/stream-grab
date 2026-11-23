@@ -214,7 +214,9 @@ content script: <video>/<source> manifests ──▶ content/domSources ──�
    tab's generation and clears its list; results of work started earlier are discarded. Closed
    tabs are forgotten. Removed streams stay hidden until the next navigation. Writes are
    debounced (100 ms) and chained per tab; `pending` streams found after a worker restart are
-   re-inspected.
+   re-inspected. Pages that load no new document (a single-page site, the back/forward cache)
+   are reported by the content script since 1.2.1, and each page keeps its own list (see
+   *Version 1.2.1* below).
 7. **Titles** (`stream-title.ts`). Exact element title for `<video src>` sources; otherwise the
    frame's only `<video>` title, JSON-LD `VideoObject` name, `og:title`, the frame's document
    title (embedded players usually title it after the video), then the top page and the tab.
@@ -1500,6 +1502,67 @@ Wired by Phase 3 (below).
   picture in the Detected tile. Chrome 116 has no H.264: its pages play WebM, and fMP4 streams get
   the icon. No maker needed a fix.
 
+## Version 1.2.1
+
+A fix: after Back or Forward the list showed videos of the page before, and on a single-page
+site it grew with every video watched in the tab. Only a main-frame response cleared it, and
+three ways of moving to another page make none: a single-page site opening another page
+(`history.pushState`), Back and Forward inside such a site, and Chrome showing a page again from
+its back/forward cache. No new permission (`webNavigation` would add "Read your browsing history"
+to the install warning and disable the extension on update until accepted).
+
+- **Content script** (`content/page-changes.ts`, top frame only): the Navigation API's `navigate`
+  event (also seen from the isolated world) gives `push` and `traverse` same-document
+  navigations; one counts once the URL is the destination (right after the event, or at
+  `navigatesuccess` for a site that commits it later), and carries the URL it leaves (`from`). A
+  move to another `#fragment` of the same page is none. `pageshow` with `persisted` is a page
+  back from the back/forward cache. Each change goes to the service worker as
+  `content/pageChanged { kind, url, from, at }`, then the DOM watcher reports every `<video>`
+  source again (`reportAgain`), so the new page's list gets them although they were reported
+  before.
+- **Replaced URLs.** A `replace` (`history.replaceState`, often a playback position such as
+  `?t=45`) is the same page, but Back returns to the replaced URL, so the page's list must be
+  found under it. It is reported as `replace { url, from }` at most every 2 s (trailing), at
+  `pagehide` when one is waiting, and once at start when the URL changed while the page loaded
+  (the navigation entry's URL differs). The service worker renames the list's page key; one told
+  only at `pagehide`, after the next document's navigation, renames that page's remembered list.
+- **Where a change starts** (`at`): what the tab finds from then on belongs to the new page. A
+  traversal or restore starts with itself. A single-page site often loads the next video between
+  the user's click and the URL change, so a `push` starts at the last `pointerdown`/`keydown` in
+  the top frame when that was at most 5 s before (`PUSH_INPUT_WINDOW_MS`), else at itself. The
+  key pressed and what was clicked are not read. The service worker bounds `at` to the last 60 s.
+- **One list per page** (`DetectionManager.changePage`): the list it leaves is remembered under
+  its page key (the URL without its `#fragment`, `listKey`), without what was first requested at
+  or after `at`; the new page's list is the one remembered for it, else empty, plus the streams
+  requested (first or again) at or after `at`, their page URL becoming the new page's. A stream
+  requested before and again after `at` is in both lists, the remembered one as a copy. Page
+  subtitle files go the same way by when the page requested them (kept in memory only; after a
+  worker restart they count as the page before's). Removed-stream keys, probe and live state
+  start over as on a navigation; `pending` streams are inspected again.
+- **Work across a change** (`pageStart`): a probe, a subtitle check or a `getTabUrl` lookup still
+  running when a change lands keeps its result for the new page when its request came at or
+  after `at`, and drops it otherwise; a candidate requested before `at` and handled after the
+  change is dropped (it belongs to the page before). A full navigation keeps the earlier rule:
+  everything begun before it is dropped.
+  A full navigation (`resetTab`) also remembers the list it leaves, so a page later shown from the
+  back/forward cache gets its list back. Up to 8 pages per tab (Chrome keeps about as many in its
+  back/forward cache), 30 streams each, stored with the tab's record (`listKey`, `pages`) so a
+  worker restart keeps them; a closed tab forgets them.
+- **Measured** (Chrome for Testing 157): with StreamGrab loaded, Chrome flushes the
+  back/forward cache (`CacheFlushed`) after the extension checks a video, so a page is shown from
+  the cache only when no video was checked after it was left (for example: a video page, a page
+  without a video, Back). Without the extension the same pages are restored. Not changed in 1.2.1.
+
+Tests: unit (`page-changes.test.ts`: push, traverse, late commit, fragments, cancelled
+navigations, the click before a push, replace reports and their throttle, `pagehide`, a URL
+replaced while loading, `pageshow`; manager: Back/Forward lists, carried streams, a video in
+both lists, Back to a replaced URL, a replace told after leaving, late candidates of the page
+before, a probe and a subtitle check across a change, subtitle files by page, restore after a
+full navigation, `pending` re-checked, 8 pages across a restart, a tab whose first navigation
+was not seen; store: `listKey` and `pages`). End to end
+(`/files/history/*`): a single-page site's second page, Back, Forward, then a page without a
+video and Back from the back/forward cache, each listing only its page's video; it fails on 1.2.0.
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and
@@ -1631,9 +1694,14 @@ Wired by Phase 3 (below).
 - Single-use manifest URLs fail inspection because the extension requests them a second time.
 - Two different videos whose URLs differ only in a token-like query parameter (e.g. `token=`)
   are merged into one entry.
-- Same-document (SPA) navigations do not clear the list; streams from the previous view stay
-  until the next full navigation or "Clear list". Back/forward-cache restores do not restore
-  the list.
+- Single-page sites (1.2.1): a site that opens another page with `history.replaceState` keeps
+  one list for both. A click inside a player's frame is not seen by the top frame, so for a
+  `push` it caused, a video loaded between the click and the URL change stays with the page
+  before. A player that keeps playing across page changes (a mini-player) leaves the list of
+  each new page when its manifest is not requested again (MSE players show only `blob:` URLs).
+  A page subtitle file's cue-offset checks stop at a page change and do not start again when the
+  page comes back. Pages changed before the content script was injected (after install or
+  update) are not seen until the tab is reloaded.
 - When a frame has several `<video>` elements, script-loaded streams get the page title, not a
   per-element title (MSE players expose only `blob:` URLs, so the element cannot be matched).
 - After install or update, tabs that were already open get the content script only after a

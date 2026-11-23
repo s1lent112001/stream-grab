@@ -20,11 +20,12 @@ import type { Logger } from '@/shared/utils/logger';
 import { dedupeKey, fileNameOf, parseHttpUrl, urlShape } from '@/shared/utils/url';
 import { involvesBlockedSite, isBlockedUrl } from './blocked-sites';
 import { junkMarks } from './junk-filter';
-import type { DetectionStore, StoredTabDetections } from './detection-store';
+import { MAX_REMEMBERED_PAGES, type DetectionStore, type StoredPage, type StoredTabDetections } from './detection-store';
 import type { ManifestInfo } from './manifest-inspector';
 import type { InspectionKind, InspectionOutcome } from './stream-inspector';
 import type { SubtitleFileInspection } from './subtitle-inspector';
 import { cueOffsetSec } from '@/core/subtitles/cue-offset';
+import { pageKey, type PageChange } from '@/shared/types/page-change';
 import type { PageCue, PageTextTrack } from '@/shared/types/text-tracks';
 
 /** A possible manifest or progressive file observed in a tab (network request or DOM element). */
@@ -105,10 +106,24 @@ export interface DetectionManagerOptions {
   logger?: Logger;
 }
 
+/** Streams kept in a remembered page's list (the newest). */
+const MAX_REMEMBERED_STREAMS = 30;
+
 interface TabState {
   tabId: number;
   generation: number;
   pageUrl: string | undefined;
+  /** The page `streams` belong to (1.2.1), without the `#fragment`; unknown before the first navigation seen. */
+  listKey: string | undefined;
+  /** Lists of pages the tab showed before (1.2.1), oldest first, at most MAX_REMEMBERED_PAGES. */
+  pages: StoredPage[];
+  /**
+   * The last page change without a new document (1.2.1): requests the page made from `at` on belong
+   * to the list started then (`generation`), also when checking them began before the change.
+   */
+  pageStart: { generation: number; subtitleGeneration: number; at: number } | undefined;
+  /** When the page requested each page subtitle file (by id), to tell which page it belongs to; not stored. */
+  subtitleSeen: Map<string, number>;
   streams: Map<string, DetectedStream>;
   /** URL shapes whose content probe found no manifest (segments of one stream share a shape). */
   probedShapes: Set<string>;
@@ -159,6 +174,12 @@ export function pageSubtitleName(existing: readonly SubtitleTrackSummary[], url:
   for (let n = 2; ; n++) {
     if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
   }
+}
+
+/** N of a page subtitle file's id `page-N`; -1 for anything else. */
+function subtitleNumber(id: string): number {
+  const n = Number(id.slice(PAGE_SUBTITLE_PREFIX.length));
+  return id.startsWith(PAGE_SUBTITLE_PREFIX) && Number.isInteger(n) && n >= 0 ? n : -1;
 }
 
 export function streamIdFor(key: string): string {
@@ -238,20 +259,85 @@ export class DetectionManager {
     return this.#track(this.#handleSubtitleFile(file));
   }
 
-  /** The tab navigated to a new document: forget everything detected for the previous one. */
+  /**
+   * The tab navigated to a new document: its list starts empty. The list of the page it left is
+   * remembered, for when Back or Forward brings that page back from the back/forward cache.
+   */
   resetTab(tabId: number, pageUrl?: string): Promise<void> {
     return this.#track(
       (async () => {
         const tab = await this.#tab(tabId);
-        this.#clear(tab);
-        tab.subtitleFiles = [];
-        tab.subtitleKeys.clear();
-        tab.subtitleChecks = 0;
-        tab.subtitleRunShapes.clear();
-        tab.subtitleGeneration += 1;
-        tab.nextSubtitleId = 0;
-        tab.pageUrl = pageUrl;
-        tab.dismissedKeys.clear();
+        this.#remember(tab, Number.POSITIVE_INFINITY);
+        this.#startPage(tab, pageUrl);
+        await this.#flushNow(tab);
+      })(),
+    );
+  }
+
+  /**
+   * The tab moved to another page without loading a new document (1.2.1): a single-page site, or a
+   * page back from the back/forward cache. The list becomes that page's: the one remembered from
+   * when the tab last showed it, else an empty one, plus what the page requested since the change
+   * started (`change.at`). The list it leaves is remembered under the URL it had then. A `replace`
+   * only renames the page the list belongs to.
+   */
+  changePage(tabId: number, change: PageChange): Promise<void> {
+    return this.#track(
+      (async () => {
+        const tab = await this.#tab(tabId);
+        // Everything below runs without yielding: a candidate cannot land in between.
+        if (tab.removed) return;
+        const key = pageKey(change.url);
+        if (change.kind === 'replace') {
+          const from = change.from === undefined ? this.#listKey(tab) : pageKey(change.from);
+          if (from === this.#listKey(tab)) {
+            if (key === from) return;
+            tab.listKey = key;
+            tab.pageUrl = change.url;
+          } else {
+            // Told as the page was being left for another document (pagehide): rename its remembered list.
+            const left = tab.pages.findLast((page) => page.key === from);
+            if (!left) return;
+            tab.pages = tab.pages.filter((page) => page === left || page.key !== key);
+            left.key = key;
+          }
+          this.#markDirty(tab);
+          return;
+        }
+        // The page left may have replaced its URL since the service worker last heard of it.
+        if (change.from !== undefined) tab.listKey = pageKey(change.from);
+        if (key === this.#listKey(tab)) return;
+        // Requested again since the change started (a video the next page plays too): in the new list as well.
+        const carried = this.#visible(tab).filter((stream) => stream.lastSeen >= change.at);
+        const carriedFiles = tab.subtitleFiles.filter((track) => (tab.subtitleSeen.get(track.id) ?? Number.NEGATIVE_INFINITY) >= change.at);
+        this.#remember(tab, change.at);
+        const restored = tab.pages.find((page) => page.key === key);
+        tab.pages = tab.pages.filter((page) => page !== restored);
+        const seen = new Map(carriedFiles.map((track) => [track.id, tab.subtitleSeen.get(track.id) ?? change.at]));
+        this.#startPage(tab, change.url);
+        tab.pageStart = { generation: tab.generation, subtitleGeneration: tab.subtitleGeneration, at: change.at };
+        tab.subtitleSeen = seen;
+        if (restored) {
+          for (const stream of restored.streams) tab.streams.set(stream.id, stream);
+          tab.subtitleFiles = restored.subtitleFiles ?? [];
+        }
+        for (const track of carriedFiles) {
+          if (!tab.subtitleFiles.some((known) => known.id === track.id)) tab.subtitleFiles.push(track);
+        }
+        while (tab.subtitleFiles.length > this.#limits.maxSubtitleFilesPerTab) tab.subtitleFiles.shift();
+        for (const track of tab.subtitleFiles) if (track.url !== undefined) tab.subtitleKeys.add(dedupeKey(track.url));
+        tab.nextSubtitleId = Math.max(tab.nextSubtitleId, ...tab.subtitleFiles.map((track) => subtitleNumber(track.id) + 1));
+        for (const stream of carried) {
+          stream.pageUrl = change.url;
+          tab.streams.set(stream.id, stream);
+        }
+        for (const stream of tab.streams.values()) {
+          this.#applySubtitles(tab, stream);
+          // Checks started for the page before were dropped with it.
+          if (stream.status === 'pending') this.#scheduleInspection(tab, stream.id);
+        }
+        for (const stream of carried) this.#schedulePageInfo(tab, stream.id);
+        this.#logger?.debug('The tab moved to another page', { tabId, kind: change.kind, restored: restored !== undefined, carried: carried.length });
         await this.#flushNow(tab);
       })(),
     );
@@ -268,7 +354,7 @@ export class DetectionManager {
     );
   }
 
-  /** User action: remove one stream; it stays hidden until the tab navigates. */
+  /** User action: remove one stream; it stays hidden until the tab moves to another page. */
   removeStream(tabId: number, streamId: string): Promise<boolean> {
     return this.#track(
       (async () => {
@@ -333,7 +419,7 @@ export class DetectionManager {
     const tab = await this.#tab(candidate.tabId);
     if (tab.removed || this.#isBlocked(candidate.url, candidate.requestContext)) return;
     // Everything below runs without yielding, as before: a duplicate candidate cannot slip in between.
-    if ((await this.#onBlockedPage(tab)) || tab.removed) return;
+    if ((await this.#onBlockedPage(tab)) || !this.#belongs(tab, tab.generation, candidate.timestamp)) return;
     const key = dedupeKey(candidate.url);
     if (tab.dismissedKeys.has(key) || this.#isChildKey(tab, key)) return;
     if (candidate.match?.protocol === 'progressive') {
@@ -360,7 +446,7 @@ export class DetectionManager {
     if (!inspect || !parseHttpUrl(file.url)) return;
     const tab = await this.#tab(file.tabId);
     if (tab.removed || this.#isBlocked(file.url, file.requestContext)) return;
-    if ((await this.#onBlockedPage(tab)) || tab.removed) return;
+    if ((await this.#onBlockedPage(tab)) || !this.#belongsSubtitle(tab, tab.subtitleGeneration, file.timestamp)) return;
     const key = dedupeKey(file.url);
     if (tab.subtitleKeys.has(key)) {
       // The same file again, maybe with a fresh token: keep the newest link.
@@ -398,7 +484,9 @@ export class DetectionManager {
     } catch (error) {
       result = { ok: false, reason: errorMessage(error), transient: true };
     }
-    if (tab.removed || tab.subtitleGeneration !== generation) return;
+    if (!this.#belongsSubtitle(tab, generation, file.timestamp)) return;
+    // Checked across a page change: the new page's list started without it.
+    tab.subtitleKeys.add(key);
     if (!result.ok) {
       // A file that could not be fetched is checked again when the page loads it again.
       if (result.transient) tab.subtitleKeys.delete(key);
@@ -415,6 +503,7 @@ export class DetectionManager {
       url: file.url,
     };
     tab.nextSubtitleId += 1;
+    tab.subtitleSeen.set(track.id, file.timestamp);
     if (result.language !== undefined) track.language = result.language;
     tab.subtitleFiles.push(track);
     for (const stream of tab.streams.values()) this.#applySubtitles(tab, stream);
@@ -507,7 +596,7 @@ export class DetectionManager {
     tab.probes += 1;
     const generation = tab.generation;
     const outcome = await this.#limit(() => this.#safeInspect(candidate.url, candidate.requestContext, 'manifest'));
-    if (!this.#isCurrent(tab, generation) || outcome.kind !== 'manifest') return;
+    if (!this.#belongs(tab, generation, candidate.timestamp) || outcome.kind !== 'manifest') return;
     // Only negative results are cached by shape; another manifest may share this one's shape.
     tab.probedShapes.delete(shape);
     if (outcome.info.live) {
@@ -809,6 +898,10 @@ export class DetectionManager {
       tabId,
       generation: stored?.generation ?? 0,
       pageUrl: stored?.pageUrl,
+      listKey: stored?.listKey,
+      pages: stored?.pages ?? [],
+      pageStart: undefined,
+      subtitleSeen: new Map(),
       streams: new Map((stored?.streams ?? []).map((stream) => [stream.id, stream])),
       probedShapes: new Set(),
       segmentShapes: new Set(),
@@ -821,7 +914,11 @@ export class DetectionManager {
       subtitleChecks: 0,
       subtitleRunShapes: new Set(),
       subtitleGeneration: 0,
-      nextSubtitleId: Math.max(0, ...(stored?.subtitleFiles ?? []).map((track) => Number(track.id.slice(PAGE_SUBTITLE_PREFIX.length)) + 1).filter(Number.isFinite)),
+      // Ids stay unique in the tab: a remembered page's files come back next to the current ones.
+      nextSubtitleId: Math.max(
+        0,
+        ...[...(stored?.subtitleFiles ?? []), ...(stored?.pages ?? []).flatMap((page) => page.subtitleFiles ?? [])].map((track) => subtitleNumber(track.id) + 1),
+      ),
       flushTimer: undefined,
       persisted: stored !== null,
       removed: false,
@@ -831,6 +928,66 @@ export class DetectionManager {
       if (stream.status === 'pending') this.#scheduleInspection(tab, stream.id);
     }
     return tab;
+  }
+
+  #listKey(tab: TabState): string | undefined {
+    return tab.listKey ?? (tab.pageUrl === undefined ? undefined : pageKey(tab.pageUrl));
+  }
+
+  /**
+   * Keeps the tab's list as its page's, without what the page requested first at or after `until`
+   * (the next page's). A stream requested before and again after is kept as a copy: the live one
+   * goes on in the next page's list.
+   */
+  #remember(tab: TabState, until: number): void {
+    const key = this.#listKey(tab);
+    if (key === undefined) return;
+    const streams = this.#visible(tab)
+      .filter((stream) => stream.firstSeen < until)
+      .map((stream) => (stream.lastSeen >= until ? structuredClone(stream) : stream))
+      .slice(-MAX_REMEMBERED_STREAMS);
+    const files = tab.subtitleFiles.filter((track) => (tab.subtitleSeen.get(track.id) ?? Number.NEGATIVE_INFINITY) < until);
+    tab.pages = tab.pages.filter((page) => page.key !== key);
+    if (streams.length === 0 && files.length === 0) return;
+    const page: StoredPage = { key, streams };
+    if (files.length > 0) page.subtitleFiles = files;
+    tab.pages.push(page);
+    if (tab.pages.length > MAX_REMEMBERED_PAGES) tab.pages.shift();
+  }
+
+  /**
+   * Whether work for a request the page made at `timestamp`, begun in `generation`, belongs to the
+   * tab's list now: the list it began for, unless a page change (1.2.1) started after the request;
+   * or the list a page change started after it was begun, when the request came after the change.
+   */
+  #belongs(tab: TabState, generation: number, timestamp: number): boolean {
+    if (tab.removed) return false;
+    const start = tab.pageStart?.generation === tab.generation ? tab.pageStart : undefined;
+    if (start && timestamp < start.at) return false;
+    return tab.generation === generation || start !== undefined;
+  }
+
+  /** `#belongs` for page subtitle files, which only a new page drops (clearing the list keeps them). */
+  #belongsSubtitle(tab: TabState, generation: number, timestamp: number): boolean {
+    if (tab.removed) return false;
+    const start = tab.pageStart?.subtitleGeneration === tab.subtitleGeneration ? tab.pageStart : undefined;
+    if (start && timestamp < start.at) return false;
+    return tab.subtitleGeneration === generation || start !== undefined;
+  }
+
+  /** An empty list for the page at `pageUrl`: nothing found, checked or removed there yet. */
+  #startPage(tab: TabState, pageUrl: string | undefined): void {
+    this.#clear(tab);
+    tab.subtitleFiles = [];
+    tab.subtitleKeys.clear();
+    tab.subtitleChecks = 0;
+    tab.subtitleRunShapes.clear();
+    tab.subtitleGeneration += 1;
+    tab.subtitleSeen = new Map();
+    tab.pageStart = undefined;
+    tab.pageUrl = pageUrl;
+    tab.listKey = pageUrl === undefined ? undefined : pageKey(pageUrl);
+    tab.dismissedKeys.clear();
   }
 
   #clear(tab: TabState): void {
@@ -851,6 +1008,7 @@ export class DetectionManager {
   /** The tab shows a blocked site now (asked fresh, see `getTabUrl`); its URL is kept for later candidates. */
   async #onBlockedPage(tab: TabState): Promise<boolean> {
     if (!this.#getTabUrl) return isBlockedUrl(tab.pageUrl);
+    const generation = tab.generation;
     let url: string | undefined;
     try {
       url = await this.#getTabUrl(tab.tabId);
@@ -858,7 +1016,11 @@ export class DetectionManager {
       return isBlockedUrl(tab.pageUrl);
     }
     if (url === undefined || parseHttpUrl(url) === null) return isBlockedUrl(tab.pageUrl);
+    // The tab moved on while Chrome answered: its answer may be the page before.
+    if (tab.generation !== generation) return isBlockedUrl(url) || isBlockedUrl(tab.pageUrl);
     tab.pageUrl = url;
+    // No navigation seen yet (the extension was just installed or updated): the list started on this page.
+    tab.listKey ??= pageKey(url);
     return isBlockedUrl(url);
   }
 
@@ -916,7 +1078,7 @@ export class DetectionManager {
       this.#markJunk(tab);
       const streams = this.#visible(tab);
       try {
-        if (streams.length === 0 && tab.subtitleFiles.length === 0) {
+        if (streams.length === 0 && tab.subtitleFiles.length === 0 && tab.pages.length === 0) {
           if (tab.persisted) await this.#store.remove(tab.tabId);
           tab.persisted = false;
         } else {
@@ -930,13 +1092,16 @@ export class DetectionManager {
           if (tab.pageUrl !== undefined) record.pageUrl = tab.pageUrl;
           // Kept also before any video is found: a player often loads its subtitles first.
           if (tab.subtitleFiles.length > 0) record.subtitleFiles = tab.subtitleFiles;
+          if (tab.listKey !== undefined) record.listKey = tab.listKey;
+          if (tab.pages.length > 0) record.pages = tab.pages;
           await this.#store.save(record);
           tab.persisted = true;
         }
-        this.#onTabChanged?.(tab.tabId, streams);
       } catch (error) {
         this.#logger?.error('Could not save tab detections', { tabId: tab.tabId, error: errorMessage(error) });
       }
+      // Also when the write failed (session storage full): the badge follows the list in memory.
+      this.#onTabChanged?.(tab.tabId, streams);
     });
     this.#saveChains.set(tab.tabId, next);
     return next;

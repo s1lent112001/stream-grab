@@ -129,6 +129,8 @@ pending, downloading, processing, completed and failed.
   Each video shows a preview picture (page poster, the player's current frame, a frame made from
   the file or one segment, or a picture the page declares for the video) instead of the icon;
   DRM streams get only a picture the page gives, and no FFmpeg is used for previews.
+  The list shows the videos of the page the tab shows, also after Back and Forward, on
+  single-page sites and for pages shown again from the back/forward cache (1.2.1).
 - Download Queue: active downloads; progress %; downloaded/total segments; speed where
   measurable; retry and error status; cancellation.
 - Completed: output filename and file size.

@@ -3,6 +3,7 @@ import { parseEngineReport, parseMediaReport, parseSaveRequest, parseTaskIds } f
 import { parseDownloadRequests, type TaskService } from '@/core/download/task-service';
 import { OFFSCREEN_DOCUMENT_PATH } from '@/shared/constants';
 import { createMessageRouter, type MessageSender } from '@/shared/messaging/router';
+import { parsePageChange } from '@/shared/types/page-change';
 import { parseDomSources } from '@/shared/types/page-metadata';
 import { StreamGrabError } from '@/shared/utils/errors';
 import { isRecord } from '@/shared/utils/guards';
@@ -86,6 +87,16 @@ export function registerMessageRouter(context: BackgroundContext): void {
         const tabId = sender.tab?.id;
         if (tabId === undefined || isExtensionPage(sender)) return undefined;
         context.detection.handleDomSources(tabId, sender.frameId ?? 0, sender.url, parseDomSources(payload));
+        return undefined;
+      },
+
+      'content/pageChanged': async (payload, sender) => {
+        const tabId = sender.tab?.id;
+        if (tabId === undefined || isExtensionPage(sender) || sender.frameId !== 0) return undefined;
+        const change = parsePageChange(payload, Date.now());
+        if (!change) throw new StreamGrabError('Invalid page change', 'INVALID_MESSAGE');
+        // Answered once the new page's list is in place: the content script then reports its sources again.
+        await context.detection.manager.changePage(tabId, change);
         return undefined;
       },
 

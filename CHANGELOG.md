@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-23
+
+### Fixed
+
+- After Back or Forward the list no longer shows videos of the page before. On single-page
+  sites (pages that change without loading a new page) each page now lists its own videos,
+  instead of every video watched in the tab piling up. A page Chrome shows again from its
+  back/forward cache gets its list back. No new permission.
+
 ## [1.2.0] - 2026-11-23
 
 ### Added

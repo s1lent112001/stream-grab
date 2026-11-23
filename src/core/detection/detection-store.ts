@@ -35,8 +35,23 @@ export interface StoredTabDetections {
   streams: DetectedStream[];
   /** WebVTT files the page loaded on its own (0.7.2), ids `page-N`; also listed in the streams' media summaries. */
   subtitleFiles?: SubtitleTrackSummary[];
+  /** The page `streams` belong to (1.2.1): its URL without the `#fragment`. */
+  listKey?: string;
+  /** Lists of the pages the tab showed before (1.2.1), oldest first: shown again on Back/Forward. */
+  pages?: StoredPage[];
   updatedAt: number;
 }
+
+/** The list of a page the tab left (1.2.1). */
+export interface StoredPage {
+  /** The page's URL without the `#fragment`. */
+  key: string;
+  streams: DetectedStream[];
+  subtitleFiles?: SubtitleTrackSummary[];
+}
+
+/** Pages remembered per tab; Chrome keeps about as many in its back/forward cache. */
+export const MAX_REMEMBERED_PAGES = 8;
 
 export const DETECTION_KEY_PREFIX = 'detections:';
 
@@ -292,12 +307,34 @@ export function parseStoredTabDetections(raw: unknown): StoredTabDetections | nu
   };
   const pageUrl = optionalString(raw['pageUrl']);
   if (pageUrl !== undefined) data.pageUrl = pageUrl;
-  if (Array.isArray(raw['subtitleFiles'])) {
-    const files = raw['subtitleFiles']
-      .slice(0, MAX_SUMMARY_ITEMS)
-      .map(parseSubtitleTrackSummary)
-      .filter((track): track is SubtitleTrackSummary => track !== null && track.url !== undefined);
-    if (files.length > 0) data.subtitleFiles = files;
+  const subtitleFiles = parseSubtitleFiles(raw['subtitleFiles']);
+  if (subtitleFiles.length > 0) data.subtitleFiles = subtitleFiles;
+  const listKey = optionalString(raw['listKey']);
+  if (listKey !== undefined) data.listKey = listKey;
+  if (Array.isArray(raw['pages'])) {
+    const pages = raw['pages']
+      .slice(-MAX_REMEMBERED_PAGES)
+      .map(parseStoredPage)
+      .filter((page) => page !== null);
+    if (pages.length > 0) data.pages = pages;
   }
   return data;
+}
+
+function parseSubtitleFiles(raw: unknown): SubtitleTrackSummary[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, MAX_SUMMARY_ITEMS)
+    .map(parseSubtitleTrackSummary)
+    .filter((track): track is SubtitleTrackSummary => track !== null && track.url !== undefined);
+}
+
+function parseStoredPage(raw: unknown): StoredPage | null {
+  if (!isRecord(raw) || !Array.isArray(raw['streams'])) return null;
+  const key = optionalString(raw['key']);
+  if (key === undefined) return null;
+  const page: StoredPage = { key, streams: raw['streams'].map(parseDetectedStream).filter((stream) => stream !== null) };
+  const subtitleFiles = parseSubtitleFiles(raw['subtitleFiles']);
+  if (subtitleFiles.length > 0) page.subtitleFiles = subtitleFiles;
+  return page;
 }

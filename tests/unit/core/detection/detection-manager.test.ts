@@ -1045,3 +1045,202 @@ describe('DetectionManager: junk filter (1.1.0)', () => {
     expect(badge.get(1)).toBe(2);
   });
 });
+
+describe('DetectionManager: pages without a new document (1.2.1)', () => {
+  const FIRST = 'https://site.example/watch/1';
+  const SECOND = 'https://site.example/watch/2';
+  const VIDEO_1 = 'https://cdn.example.com/vod/one/index.m3u8';
+  const VIDEO_2 = 'https://cdn.example.com/vod/two/index.m3u8';
+  const outcomes = { [VIDEO_1]: manifest(hlsTs, VIDEO_1), [VIDEO_2]: manifest(hlsTs, VIDEO_2) };
+  const urls = async (manager: DetectionManager) => (await manager.getStreams(1)).map((stream) => stream.url);
+
+  it('shows each page its own list on a single-page site: a new page, Back, Forward', async () => {
+    const { manager, advance } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 1_000 }));
+    await manager.idle();
+
+    // Long after the first video, the site opens another page; its video loads right after.
+    advance(60_000);
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 61_000 });
+    expect(await urls(manager)).toEqual([]);
+    await manager.handleCandidate(candidate(VIDEO_2, { timestamp: 61_500 }));
+    await manager.idle();
+    expect(await urls(manager)).toEqual([VIDEO_2]);
+
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 70_000 });
+    await manager.idle();
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_1, status: 'ready' }]);
+    await manager.changePage(1, { kind: 'traverse', url: `${SECOND}#comments`, at: 71_000 });
+    await manager.idle();
+    expect(await urls(manager)).toEqual([VIDEO_2]);
+  });
+
+  it('keeps in the new page what the tab found since the change started: the click before a push, Back', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 1_000 }));
+    // After the click (8 s), the site loaded the next video, then changed the URL.
+    await manager.handleCandidate(candidate(VIDEO_2, { timestamp: 9_000 }));
+    await manager.idle();
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 8_000 });
+    await manager.idle();
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_2, pageUrl: SECOND }]);
+
+    // Back: a request seen before the service worker heard of it, but after Back was pressed, joins the page's list.
+    const trailer = 'https://cdn.example.com/vod/trailer/index.m3u8';
+    await manager.handleCandidate(candidate(trailer, { timestamp: 20_500 }));
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 20_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1, trailer]);
+  });
+
+  it('ignores a move to another #fragment of the same page', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1));
+    await manager.idle();
+    await manager.changePage(1, { kind: 'push', url: `${FIRST}#t=30`, at: 50_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+  });
+
+  it('brings back the list of a page restored from the back/forward cache', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1));
+    await manager.idle();
+    await manager.resetTab(1, 'https://other.example/no-video');
+    expect(await urls(manager)).toEqual([]);
+
+    await manager.changePage(1, { kind: 'restored', url: FIRST, at: 30_000 });
+    await manager.idle();
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_1, status: 'ready' }]);
+  });
+
+  it('checks a stream it was still checking when the tab left its page, once the page is back', async () => {
+    const first = deferred<InspectionOutcome>();
+    const { manager, outcomes: results, inspect } = setup({ outcomes: { [VIDEO_1]: () => first.promise } });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1));
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 60_000 });
+    results[VIDEO_1] = manifest(hlsTs, VIDEO_1);
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 61_000 });
+    // The check started for the page before ends late: its result is not used.
+    first.resolve({ kind: 'failed', reason: 'too late' });
+    await manager.idle();
+    expect(inspect).toHaveBeenCalledTimes(2);
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_1, status: 'ready' }]);
+  });
+
+  it('keeps remembered pages across a service-worker restart, at most 8, and forgets them with the tab', async () => {
+    const area = new FakeStorageArea('session');
+    const first = setup({ area, outcomes });
+    await first.manager.resetTab(1, FIRST);
+    await first.manager.handleCandidate(candidate(VIDEO_1));
+    await first.manager.idle();
+    for (let page = 0; page < 9; page++) {
+      await first.manager.changePage(1, { kind: 'push', url: `${SECOND}?page=${page}`, at: 100_000 * (page + 1) });
+      await first.manager.handleCandidate(candidate(`${VIDEO_2}?page=${page}`, { timestamp: 100_000 * (page + 1) + 1 }));
+      await first.manager.idle();
+    }
+    const stored = area.data.get(detectionStorageKey(1)) as { listKey: string; pages: { key: string }[] };
+    expect(stored.listKey).toBe(`${SECOND}?page=8`);
+    // The first page and the oldest second ones went first.
+    expect(stored.pages.map((page) => page.key)).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map((page) => `${SECOND}?page=${page}`));
+
+    const second = setup({ area, outcomes });
+    await second.manager.changePage(1, { kind: 'traverse', url: `${SECOND}?page=7`, at: 2_000_000 });
+    await second.manager.idle();
+    expect(await urls(second.manager)).toEqual([`${VIDEO_2}?page=7`]);
+    await second.manager.changePage(1, { kind: 'traverse', url: FIRST, at: 2_000_001 });
+    expect(await urls(second.manager)).toEqual([]);
+
+    await second.manager.dropTab(1);
+    expect(area.data.has(detectionStorageKey(1))).toBe(false);
+  });
+
+  it('finds a page again under the URL it replaced (a playback position), also one left for another document', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1));
+    await manager.idle();
+    // The page replaced its URL; the service worker heard of it, or only from the push that left it.
+    await manager.changePage(1, { kind: 'replace', url: `${FIRST}?t=10`, from: FIRST, at: 2_000 });
+    await manager.changePage(1, { kind: 'push', url: SECOND, from: `${FIRST}?t=45`, at: 60_000 });
+    await manager.changePage(1, { kind: 'traverse', url: `${FIRST}?t=45`, from: SECOND, at: 70_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+
+    // Replaced, then told only as the page was left for another document (after that navigation).
+    await manager.resetTab(1, 'https://other.example/page');
+    await manager.changePage(1, { kind: 'replace', url: `${FIRST}?t=90`, from: `${FIRST}?t=45`, at: 80_000 });
+    expect(await urls(manager)).toEqual([]);
+    await manager.changePage(1, { kind: 'restored', url: `${FIRST}?t=90`, at: 90_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+  });
+
+  it('keeps in both lists a video requested again for the next page, as separate entries', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST);
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 1_000 }));
+    await manager.idle();
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 50_500 }));
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 50_000 });
+    await manager.idle();
+    const [carried] = await manager.getStreams(1);
+    expect(carried).toMatchObject({ url: VIDEO_1, pageUrl: SECOND });
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 60_000 });
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_1, pageUrl: FIRST }]);
+  });
+
+  it('drops what the page before requested once the change is known, and keeps what the new page requested while it was checked', async () => {
+    const PROBED = 'https://cdn.example.com/api/play?id=2';
+    const answer = deferred<InspectionOutcome>();
+    const { manager, inspect } = setup({ outcomes: { ...outcomes, [PROBED]: () => answer.promise } });
+    await manager.resetTab(1, FIRST);
+    const { match: _match, ...probe } = candidate(PROBED, { timestamp: 50_500 });
+    void manager.handleCandidate(probe);
+    await vi.waitFor(() => {
+      expect(inspect).toHaveBeenCalledWith(PROBED, {}, 'manifest');
+    });
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 50_000 });
+    // Late news of a request the page before made.
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 49_000 }));
+    answer.resolve(manifest(hlsTs, PROBED));
+    await manager.idle();
+    expect(await urls(manager)).toEqual([PROBED]);
+  });
+
+  it('moves a page subtitle file the next page loaded into its list, also one still being checked', async () => {
+    const ZH = 'https://cdn.example.com/sub/ep1.zh.vtt';
+    const EN = 'https://cdn.example.com/sub/ep2.en.vtt';
+    const FR = 'https://cdn.example.com/sub/ep2.fr.vtt';
+    const fr = deferred<SubtitleFileInspection>();
+    const area = new FakeStorageArea('session');
+    const { manager, inspectSubtitle } = setup({ area, outcomes, subtitleFiles: { [ZH]: { ok: true, language: 'zh' }, [EN]: { ok: true, language: 'en' } } });
+    inspectSubtitle.mockImplementation((url: string) =>
+      url === FR ? fr.promise : Promise.resolve(url === ZH ? { ok: true, language: 'zh' } : { ok: true, language: 'en' }),
+    );
+    const file = (url: string, timestamp: number) => ({ tabId: 1, frameId: 0, url, requestContext: {}, timestamp });
+    await manager.resetTab(1, FIRST);
+    await manager.handleSubtitleFile(file(ZH, 1_000));
+    await manager.handleSubtitleFile(file(EN, 50_200));
+    await manager.idle();
+    void manager.handleSubtitleFile(file(FR, 50_400));
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 50_000 });
+    fr.resolve({ ok: true, language: 'fr' });
+    await manager.idle();
+    const stored = () => area.data.get(detectionStorageKey(1)) as { subtitleFiles?: { url: string; id: string }[] };
+    expect(stored().subtitleFiles?.map((track) => track.url)).toEqual([EN, FR]);
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 60_000 });
+    await manager.idle();
+    expect(stored().subtitleFiles?.map((track) => [track.id, track.url])).toEqual([['page-0', ZH]]);
+  });
+
+  it('starts the list on the page the tab showed when no navigation was seen yet (extension just updated)', async () => {
+    const { manager } = setup({ outcomes, tabUrl: FIRST });
+    await manager.handleCandidate(candidate(VIDEO_1));
+    await manager.idle();
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 60_000 });
+    await manager.changePage(1, { kind: 'traverse', url: FIRST, at: 61_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+  });
+});
