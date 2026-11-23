@@ -49,8 +49,8 @@ const pages =
         sendToBackground('content/pageChanged', change)
           .catch(stopIfOrphaned)
           .finally(() => {
-            // A replaced URL is the same page: its list stays.
-            if (change.kind !== 'replace' && chrome.runtime.id) watcher.reportAgain();
+            // A replaced URL is the same page, and a new document's watcher reports its sources anyway.
+            if (change.kind !== 'replace' && change.kind !== 'load' && chrome.runtime.id) watcher.reportAgain();
           });
       })
     : undefined;

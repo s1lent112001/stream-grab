@@ -16,13 +16,17 @@ function fakeWindow(url: string) {
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Collects the reports of a test about something else than the document's own `load` report. */
+const collect = (changes: PageChange[]) => (change: PageChange) => {
+  if (change.kind !== 'load') changes.push(change);
+};
 
 describe('watchPageChanges (1.2.1)', () => {
   it('reports a single-page site opening another page and going Back, once the URL is the new one', async () => {
     const { win, navigate, commit, navigation } = fakeWindow('https://site.example/watch/1');
     const changes: PageChange[] = [];
     let clock = 100;
-    const watcher = watchPageChanges(win, (change) => changes.push(change), () => clock);
+    const watcher = watchPageChanges(win, collect(changes), () => clock);
 
     navigate('push', 'https://site.example/watch/2');
     commit('https://site.example/watch/2');
@@ -45,7 +49,7 @@ describe('watchPageChanges (1.2.1)', () => {
   it('ignores another #fragment, new documents and cancelled navigations', async () => {
     const { win, navigate, commit, navigation } = fakeWindow('https://site.example/watch/1');
     const changes: PageChange[] = [];
-    const watcher = watchPageChanges(win, (change) => changes.push(change));
+    const watcher = watchPageChanges(win, collect(changes));
     navigate('push', 'https://site.example/watch/1#comments');
     navigate('replace', 'https://site.example/watch/1#t=30');
     navigate('push', 'https://site.example/other', false);
@@ -63,11 +67,11 @@ describe('watchPageChanges (1.2.1)', () => {
     expect(changes).toEqual([]);
   });
 
-  it('reports a replaced URL at most every 2 s, before the page is left, and one replaced while it loaded', async () => {
+  it('reports a replaced URL at most every 2 s, and before the page is left', async () => {
     const { win, navigate, commit } = fakeWindow('https://site.example/watch/1');
     const changes: PageChange[] = [];
     const clock = 1_000;
-    const watcher = watchPageChanges(win, (change) => changes.push(change), () => clock);
+    const watcher = watchPageChanges(win, collect(changes), () => clock);
     navigate('replace', 'https://site.example/watch/1?t=1');
     commit('https://site.example/watch/1?t=1');
     await tick();
@@ -90,18 +94,41 @@ describe('watchPageChanges (1.2.1)', () => {
     expect(changes.slice(2)).toEqual([{ kind: 'push', url: 'https://site.example/watch/2', from: 'https://site.example/watch/1?t=4', at: 1_000 }]);
     watcher.stop();
 
-    const loading = fakeWindow('https://site.example/watch/9?from=home');
-    Object.assign(loading.win, { performance: { getEntriesByType: () => [{ name: 'https://site.example/watch/9' }] } });
-    const early: PageChange[] = [];
-    watchPageChanges(loading.win, (change) => early.push(change), () => 7).stop();
-    expect(early).toEqual([{ kind: 'replace', url: 'https://site.example/watch/9?from=home', from: 'https://site.example/watch/9', at: 7 }]);
+  });
+
+  it('reports the document as it starts, from its navigation or from when Chrome showed it prerendered', () => {
+    const loaded = fakeWindow('https://site.example/watch/9?from=home');
+    Object.assign(loaded.win, { performance: { timeOrigin: 1_000.5, getEntriesByType: () => [{ activationStart: 0 }] } });
+    const changes: PageChange[] = [];
+    watchPageChanges(loaded.win, (change) => changes.push(change), () => 9_999).stop();
+    const prerendered = fakeWindow('https://site.example/watch/10');
+    Object.assign(prerendered.win, { performance: { timeOrigin: 1_000, getEntriesByType: () => [{ activationStart: 4_000 }] } });
+    watchPageChanges(prerendered.win, (change) => changes.push(change), () => 9_999).stop();
+    // Prerendered: reported once Chrome shows it.
+    const hidden = fakeWindow('https://site.example/watch/12');
+    const doc = Object.assign(new EventTarget(), { prerendering: true });
+    Object.assign(hidden.win, { document: doc, performance: { timeOrigin: 2_000, getEntriesByType: () => [{ activationStart: 0 }] } });
+    const hiddenWatcher = watchPageChanges(hidden.win, (change) => changes.push(change), () => 9_999);
+    expect(changes).toHaveLength(2);
+    Object.assign(hidden.win, { performance: { timeOrigin: 2_000, getEntriesByType: () => [{ activationStart: 3_000 }] } });
+    doc.prerendering = false;
+    doc.dispatchEvent(new Event('prerenderingchange'));
+    hiddenWatcher.stop();
+    const bare = fakeWindow('https://site.example/watch/11');
+    watchPageChanges(bare.win, (change) => changes.push(change), () => 9_999).stop();
+    expect(changes).toEqual([
+      { kind: 'load', url: 'https://site.example/watch/9?from=home', at: 1_000.5 },
+      { kind: 'load', url: 'https://site.example/watch/10', at: 5_000 },
+      { kind: 'load', url: 'https://site.example/watch/12', at: 5_000 },
+      { kind: 'load', url: 'https://site.example/watch/11', at: 9_999 },
+    ]);
   });
 
   it('starts a push at the click or key press shortly before it, a traversal at itself', async () => {
     const { win, navigate, commit } = fakeWindow('https://site.example/watch/1');
     const changes: PageChange[] = [];
     let clock = 1_000;
-    const watcher = watchPageChanges(win, (change) => changes.push(change), () => clock);
+    const watcher = watchPageChanges(win, collect(changes), () => clock);
     win.dispatchEvent(new Event('pointerdown'));
     clock = 3_000;
     navigate('push', 'https://site.example/watch/2');
@@ -127,7 +154,7 @@ describe('watchPageChanges (1.2.1)', () => {
   it('reports a page back from the back/forward cache, not a page loaded anew', () => {
     const { win } = fakeWindow('https://site.example/watch/1');
     const changes: PageChange[] = [];
-    const watcher = watchPageChanges(win, (change) => changes.push(change), () => 5);
+    const watcher = watchPageChanges(win, collect(changes), () => 5);
     win.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: false }));
     win.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
     expect(changes).toEqual([{ kind: 'restored', url: 'https://site.example/watch/1', at: 5 }]);

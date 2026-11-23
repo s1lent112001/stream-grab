@@ -100,8 +100,8 @@ export function startDetectionService(): DetectionService {
       subtitleFile: (file) => {
         whenEnabled(() => manager.handleSubtitleFile(file));
       },
-      navigation: (tabId, url) => {
-        void manager.resetTab(tabId, url);
+      navigation: (tabId, url, timestamp) => {
+        void manager.resetTab(tabId, url, timestamp);
       },
     },
     chrome.runtime.id,

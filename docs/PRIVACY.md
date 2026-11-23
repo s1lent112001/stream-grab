@@ -16,10 +16,10 @@ share any data about you**.
 - **The page itself, through a content script.** On every http(s) page it reads the page title
   and the page's title metadata (social and structured-data tags), the `<video>`, `<source>` and
   `<track>` elements with their labels, size and duration, and the subtitle cues a player holds,
-  so a video can be listed with a useful name and the right subtitles. It notices when the page
-  moves to another address without loading a new page (Back, Forward, a site that changes pages
-  itself) and when you last clicked or pressed a key there, only to tell which videos belong to
-  which page. It does not read what you type or click, and it never runs code from the page.
+  so a video can be listed with a useful name and the right subtitles. It notices when a page
+  loads and when it moves to another address without loading a new page (Back, Forward, a site
+  that changes pages itself), and when you last clicked or pressed a key there, only to tell
+  which videos belong to which page. It does not read what you type or click, and it never runs code from the page.
 
 YouTube sites are excluded: StreamGrab does not run on them and does not detect or download their
 videos.

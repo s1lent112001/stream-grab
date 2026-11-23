@@ -15,6 +15,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sites (pages that change without loading a new page) each page now lists its own videos,
   instead of every video watched in the tab piling up. A page Chrome shows again from its
   back/forward cache gets its list back. No new permission.
+- On sites whose own service worker loads their pages, the list now starts anew with each page,
+  instead of keeping every video seen in the tab.
 
 ## [1.2.0] - 2026-11-23
 

@@ -117,6 +117,8 @@ interface TabState {
   listKey: string | undefined;
   /** Lists of pages the tab showed before (1.2.1), oldest first, at most MAX_REMEMBERED_PAGES. */
   pages: StoredPage[];
+  /** Epoch ms when the list's page started (a navigation's response, a page change); unknown before the first. */
+  listStartedAt: number | undefined;
   /**
    * The last page change without a new document (1.2.1): requests the page made from `at` on belong
    * to the list started then (`generation`), also when checking them began before the change.
@@ -263,12 +265,13 @@ export class DetectionManager {
    * The tab navigated to a new document: its list starts empty. The list of the page it left is
    * remembered, for when Back or Forward brings that page back from the back/forward cache.
    */
-  resetTab(tabId: number, pageUrl?: string): Promise<void> {
+  resetTab(tabId: number, pageUrl?: string, at?: number): Promise<void> {
     return this.#track(
       (async () => {
         const tab = await this.#tab(tabId);
         this.#remember(tab, Number.POSITIVE_INFINITY);
         this.#startPage(tab, pageUrl);
+        tab.listStartedAt = at ?? this.#now();
         await this.#flushNow(tab);
       })(),
     );
@@ -279,7 +282,9 @@ export class DetectionManager {
    * page back from the back/forward cache. The list becomes that page's: the one remembered from
    * when the tab last showed it, else an empty one, plus what the page requested since the change
    * started (`change.at`). The list it leaves is remembered under the URL it had then. A `replace`
-   * only renames the page the list belongs to.
+   * only renames the page the list belongs to. A `load` starts a new list, like a navigation, when
+   * the document started after the list did (its page load was not seen on the network); else it
+   * only renames the list's page to the URL the document has now.
    */
   changePage(tabId: number, change: PageChange): Promise<void> {
     return this.#track(
@@ -304,18 +309,30 @@ export class DetectionManager {
           this.#markDirty(tab);
           return;
         }
+        if (change.kind === 'load' && change.at <= (tab.listStartedAt ?? Number.NEGATIVE_INFINITY)) {
+          // The navigation was seen; the page may have replaced its URL while it loaded.
+          if (key !== this.#listKey(tab)) {
+            tab.listKey = key;
+            tab.pageUrl = change.url;
+            this.#markDirty(tab);
+          }
+          return;
+        }
         // The page left may have replaced its URL since the service worker last heard of it.
         if (change.from !== undefined) tab.listKey = pageKey(change.from);
-        if (key === this.#listKey(tab)) return;
+        // A new document is a new page even at the same URL (a reload).
+        if (change.kind !== 'load' && key === this.#listKey(tab)) return;
         // Requested again since the change started (a video the next page plays too): in the new list as well.
         const carried = this.#visible(tab).filter((stream) => stream.lastSeen >= change.at);
         const carriedFiles = tab.subtitleFiles.filter((track) => (tab.subtitleSeen.get(track.id) ?? Number.NEGATIVE_INFINITY) >= change.at);
         this.#remember(tab, change.at);
-        const restored = tab.pages.find((page) => page.key === key);
+        // A new document loads its videos again, as after a navigation: nothing remembered comes back.
+        const restored = change.kind === 'load' ? undefined : tab.pages.find((page) => page.key === key);
         tab.pages = tab.pages.filter((page) => page !== restored);
         const seen = new Map(carriedFiles.map((track) => [track.id, tab.subtitleSeen.get(track.id) ?? change.at]));
         this.#startPage(tab, change.url);
         tab.pageStart = { generation: tab.generation, subtitleGeneration: tab.subtitleGeneration, at: change.at };
+        tab.listStartedAt = change.at;
         tab.subtitleSeen = seen;
         if (restored) {
           for (const stream of restored.streams) tab.streams.set(stream.id, stream);
@@ -900,6 +917,7 @@ export class DetectionManager {
       pageUrl: stored?.pageUrl,
       listKey: stored?.listKey,
       pages: stored?.pages ?? [],
+      listStartedAt: stored?.listStartedAt,
       pageStart: undefined,
       subtitleSeen: new Map(),
       streams: new Map((stored?.streams ?? []).map((stream) => [stream.id, stream])),
@@ -1093,6 +1111,7 @@ export class DetectionManager {
           // Kept also before any video is found: a player often loads its subtitles first.
           if (tab.subtitleFiles.length > 0) record.subtitleFiles = tab.subtitleFiles;
           if (tab.listKey !== undefined) record.listKey = tab.listKey;
+          if (tab.listStartedAt !== undefined) record.listStartedAt = tab.listStartedAt;
           if (tab.pages.length > 0) record.pages = tab.pages;
           await this.#store.save(record);
           tab.persisted = true;

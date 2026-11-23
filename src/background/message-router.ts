@@ -92,7 +92,8 @@ export function registerMessageRouter(context: BackgroundContext): void {
 
       'content/pageChanged': async (payload, sender) => {
         const tabId = sender.tab?.id;
-        if (tabId === undefined || isExtensionPage(sender) || sender.frameId !== 0) return undefined;
+        // A prerendered page is not the tab's page yet (its content script waits until it is shown).
+        if (tabId === undefined || isExtensionPage(sender) || sender.frameId !== 0 || sender.documentLifecycle === 'prerender') return undefined;
         const change = parsePageChange(payload, Date.now());
         if (!change) throw new StreamGrabError('Invalid page change', 'INVALID_MESSAGE');
         // Answered once the new page's list is in place: the content script then reports its sources again.

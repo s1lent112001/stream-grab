@@ -161,6 +161,28 @@ show();
 const HISTORY_PLAIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>StreamGrab page without a video</title></head>
 <body style="font:14px system-ui"><p>No video here. Go Back: the popup should list the video of the page before again.</p></body></html>`;
 
+/**
+ * A site whose own service worker answers its page loads (1.2.1): `webRequest` sees no main-frame
+ * response for them. Pages /files/sw-site/N each play video N; the worker passes page loads on
+ * with `fetch` and leaves every other request alone.
+ */
+export const SW_SITE_PATH = '/files/sw-site';
+const SW_SITE_WORKER = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') event.respondWith(fetch(event.request));
+});`;
+
+function swSitePage(n: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>StreamGrab site with a service worker</title></head>
+<body style="font:14px system-ui"><h1>Video ${n}</h1>
+<p>This site's service worker answers its page loads, so the extension sees no page load on the network.
+<a href="${SW_SITE_PATH}/${Number(n) + 1}">Next video</a></p>
+<video title="Video ${n}" src="/files/history/video-${n}.mp4" preload="auto" muted width="320"></video>
+<script>navigator.serviceWorker.register('${SW_SITE_PATH}/sw.js');</script>
+</body></html>`;
+}
+
 /** Pages Chrome may keep in its back/forward cache. */
 const CACHEABLE_PAGE = { 'cache-control': 'no-cache' };
 
@@ -253,6 +275,9 @@ export function createProgressiveRouter(files: SyntheticFiles): (pathname: strin
     if (pathname.startsWith(`${HISTORY_WATCH_PATH}/`)) {
       return { status: 200, contentType: 'text/html; charset=utf-8', body: historyWatchPage(), headers: CACHEABLE_PAGE };
     }
+    if (pathname === `${SW_SITE_PATH}/sw.js`) return { status: 200, contentType: 'text/javascript; charset=utf-8', body: SW_SITE_WORKER };
+    const swPage = /^\/files\/sw-site\/(\d+)$/.exec(pathname);
+    if (swPage?.[1] !== undefined) return { status: 200, contentType: 'text/html; charset=utf-8', body: swSitePage(swPage[1]) };
     if (pathname === HISTORY_PLAIN_PATH) return { status: 200, contentType: 'text/html; charset=utf-8', body: HISTORY_PLAIN_PAGE, headers: CACHEABLE_PAGE };
     if (/^\/files\/history\/video-\d+\.mp4$/.test(pathname)) return serveFile(files.mp4FastStart, 'video/mp4', request?.range);
     if (pathname === JUNK_PAGE_PATH) return { status: 200, contentType: 'text/html; charset=utf-8', body: junkPage() };

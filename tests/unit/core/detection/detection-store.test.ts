@@ -46,9 +46,12 @@ describe('parseStoredTabDetections', () => {
     const parsed = parseStoredTabDetections({
       ...record,
       listKey: 'https://site.example/watch/0',
+      listStartedAt: 1_234.5,
       pages: [{ key: 7, streams: [] }, { key: 'https://site.example/x' }, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(page)],
     });
     expect(parsed?.listKey).toBe('https://site.example/watch/0');
+    expect(parsed?.listStartedAt).toBe(1_234.5);
+    expect(parseStoredTabDetections({ ...record, listStartedAt: 'soon' })?.listStartedAt).toBeUndefined();
     expect(parsed?.pages?.map((kept) => kept.key)).toEqual([2, 3, 4, 5, 6, 7, 8, 9].map((n) => `https://site.example/watch/${n}`));
     expect(parsed?.pages?.[0]?.streams).toEqual([stream]);
     expect(parseStoredTabDetections(record)?.pages).toBeUndefined();

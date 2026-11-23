@@ -34,8 +34,8 @@ export interface NetworkMonitorSink {
   candidate(candidate: DetectionCandidate): void;
   /** A WebVTT file the page loaded on its own (0.7.2): a player's subtitles, next to its video. */
   subtitleFile(file: SubtitleFileCandidate): void;
-  /** A tab's top frame started loading a new document. */
-  navigation(tabId: number, url: string): void;
+  /** A tab's top frame started loading a new document (`timestamp`: when its response started). */
+  navigation(tabId: number, url: string, timestamp: number): void;
 }
 
 const HTTP_URLS = ['http://*/*', 'https://*/*'];
@@ -172,6 +172,6 @@ export class NetworkMonitor {
   readonly #onNavigation = (details: chrome.webRequest.OnResponseStartedDetails): void => {
     if (details.tabId < 0 || details.frameId !== 0 || details.documentLifecycle === 'prerender') return;
     if (details.statusCode < 200 || details.statusCode >= 300 || details.statusCode === 204) return;
-    this.#sink.navigation(details.tabId, details.url);
+    this.#sink.navigation(details.tabId, details.url, details.timeStamp);
   };
 }

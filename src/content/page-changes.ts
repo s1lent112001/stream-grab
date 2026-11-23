@@ -10,7 +10,9 @@ import { pageKey, type PageChange } from '@/shared/types/page-change';
  *
  * A replaced URL (`history.replaceState`) is reported too, at most every
  * REPLACE_REPORT_MS: the page's list must be found again under the URL Back
- * and Forward will show.
+ * and Forward will show. So is the document itself, once, as it starts
+ * (`load`): a site's own service worker may have answered its page load,
+ * which the extension does not see on the network.
  */
 
 /** The subset of the Navigation API used here (Chrome 102+). */
@@ -35,8 +37,8 @@ export function watchPageChanges(win: Window, report: (change: PageChange) => vo
   /** A same-document navigation to another page, reported once its URL is the page's. */
   let pending: PageChange | undefined;
   let lastInput = Number.NEGATIVE_INFINITY;
-  /** The page's URL as the service worker knows it (the document's URL until a report changes it). */
-  let reportedUrl = documentUrl(win);
+  /** The page's URL as the service worker knows it (the `load` report, then the last report). */
+  let reportedUrl = win.location.href;
   let replaceTimer: ReturnType<typeof setTimeout> | undefined;
   let lastReplaceReport = Number.NEGATIVE_INFINITY;
 
@@ -105,12 +107,19 @@ export function watchPageChanges(win: Window, report: (change: PageChange) => vo
   win.addEventListener('pagehide', onPageHide);
   win.addEventListener('pointerdown', onInput, { capture: true, passive: true });
   win.addEventListener('keydown', onInput, { capture: true, passive: true });
-  // The URL may have changed while the page loaded, before this script ran.
-  flushReplace();
+  // Also tells the URL the page has now, which it may have replaced while it loaded. A page Chrome
+  // prerenders is not the tab's page yet: it is reported once it is shown.
+  const reportLoad = (): void => {
+    send({ kind: 'load', url: win.location.href, at: documentStart(win, now) });
+  };
+  const doc = win.document as (Document & { prerendering?: boolean }) | undefined;
+  if (doc?.prerendering === true) doc.addEventListener('prerenderingchange', reportLoad, { once: true });
+  else reportLoad();
 
   return {
     stop() {
       clearTimeout(replaceTimer);
+      doc?.removeEventListener('prerenderingchange', reportLoad);
       navigation?.removeEventListener('navigate', onNavigate);
       navigation?.removeEventListener('navigatesuccess', settle);
       navigation?.removeEventListener('navigateerror', onNavigateError);
@@ -122,8 +131,10 @@ export function watchPageChanges(win: Window, report: (change: PageChange) => vo
   };
 }
 
-/** The URL the document was loaded from (the main-frame response the service worker saw). */
-function documentUrl(win: Window): string {
-  const entry = win.performance?.getEntriesByType?.('navigation')[0];
-  return entry?.name || win.location.href;
+/** Epoch ms when the document's navigation started, or when the page was shown if Chrome prerendered it. */
+function documentStart(win: Window, now: () => number): number {
+  const performance = win.performance as Performance | undefined;
+  if (!performance || !Number.isFinite(performance.timeOrigin)) return now();
+  const entry = performance.getEntriesByType?.('navigation')[0] as (PerformanceNavigationTiming & { activationStart?: number }) | undefined;
+  return performance.timeOrigin + (entry?.activationStart ?? 0);
 }

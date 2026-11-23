@@ -1235,6 +1235,37 @@ describe('DetectionManager: pages without a new document (1.2.1)', () => {
     expect(stored().subtitleFiles?.map((track) => [track.id, track.url])).toEqual([['page-0', ZH]]);
   });
 
+  it("starts a new list for a document whose page load it did not see (the site's service worker answered it)", async () => {
+    const area = new FakeStorageArea('session');
+    const { manager } = setup({ area, outcomes });
+    await manager.resetTab(1, FIRST, 1_000);
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 2_000 }));
+    await manager.idle();
+    // The next page loaded at 50 s; its video was requested before its content script reported it.
+    await manager.handleCandidate(candidate(VIDEO_2, { timestamp: 50_800 }));
+    await manager.changePage(1, { kind: 'load', url: SECOND, at: 50_000 });
+    await manager.idle();
+    expect(await manager.getStreams(1)).toMatchObject([{ url: VIDEO_2, pageUrl: SECOND }]);
+    expect(area.data.get(detectionStorageKey(1))).toMatchObject({ listKey: SECOND, listStartedAt: 50_000, pages: [{ key: FIRST }] });
+
+    // Reloaded the same way: a new document at the same URL starts over too.
+    await manager.changePage(1, { kind: 'load', url: SECOND, at: 90_000 });
+    expect(await urls(manager)).toEqual([]);
+  });
+
+  it('keeps the list of a document whose page load it saw, under the URL the page has now', async () => {
+    const { manager } = setup({ outcomes });
+    await manager.resetTab(1, FIRST, 10_000);
+    await manager.handleCandidate(candidate(VIDEO_1, { timestamp: 10_500 }));
+    await manager.idle();
+    await manager.changePage(1, { kind: 'load', url: `${FIRST}?autoplay=1`, at: 9_990 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+    // Back to that URL later finds the list.
+    await manager.changePage(1, { kind: 'push', url: SECOND, at: 60_000 });
+    await manager.changePage(1, { kind: 'traverse', url: `${FIRST}?autoplay=1`, at: 61_000 });
+    expect(await urls(manager)).toEqual([VIDEO_1]);
+  });
+
   it('starts the list on the page the tab showed when no navigation was seen yet (extension just updated)', async () => {
     const { manager } = setup({ outcomes, tabUrl: FIRST });
     await manager.handleCandidate(candidate(VIDEO_1));

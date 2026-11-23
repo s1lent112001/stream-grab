@@ -24,6 +24,7 @@ import {
   HISTORY_WATCH_PATH,
   historyVideoPath,
   JUNK_AD_HOST,
+  SW_SITE_PATH,
   JUNK_AD_PATH,
   JUNK_PAGE_PATH,
   JUNK_PREVIEW_PATH,
@@ -1127,6 +1128,30 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
     await page.goBack();
     expect(await page.evaluate(() => (window as unknown as { kept?: boolean }).kept)).toBe(true);
     await listIs('Back from the back/forward cache', [historyVideoPath(2)]);
+    await page.close();
+    await ext.close();
+  });
+
+  it("starts a page's list anew when the site's own service worker answers the page load (1.2.1)", async () => {
+    const page = await browser.newPage();
+    const first = `${site.origin}${SW_SITE_PATH}/1`;
+    await page.goto(first);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, { timeout: 10_000 });
+    const ext = await extensionPage();
+    const { tabId } = await detected(ext, first, [historyVideoPath(1)]);
+
+    // The next video's page: a new document, answered by the site's service worker.
+    await page.goto(`${site.origin}${SW_SITE_PATH}/2`);
+    expect(await page.evaluate(() => (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming).workerStart > 0)).toBe(true);
+    await waitFor(
+      'the list of the second page only',
+      async () => {
+        const streams = await ext.evaluate(async (key) => ((await chrome.storage.session.get(key))[key] as { streams: DetectedStream[] } | undefined)?.streams ?? [], `detections:${tabId}`);
+        const listed = streams.map((stream) => new URL(stream.url).pathname);
+        return listed.join() === historyVideoPath(2) && streams.every((stream) => stream.status === 'ready') ? true : undefined;
+      },
+      15_000,
+    );
     await page.close();
     await ext.close();
   });

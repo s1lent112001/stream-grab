@@ -37,6 +37,8 @@ export interface StoredTabDetections {
   subtitleFiles?: SubtitleTrackSummary[];
   /** The page `streams` belong to (1.2.1): its URL without the `#fragment`. */
   listKey?: string;
+  /** Epoch ms when that page's list started (1.2.1): a document that started later was not seen loading. */
+  listStartedAt?: number;
   /** Lists of the pages the tab showed before (1.2.1), oldest first: shown again on Back/Forward. */
   pages?: StoredPage[];
   updatedAt: number;
@@ -311,6 +313,8 @@ export function parseStoredTabDetections(raw: unknown): StoredTabDetections | nu
   if (subtitleFiles.length > 0) data.subtitleFiles = subtitleFiles;
   const listKey = optionalString(raw['listKey']);
   if (listKey !== undefined) data.listKey = listKey;
+  const listStartedAt = finiteNumber(raw['listStartedAt']);
+  if (listStartedAt !== undefined) data.listStartedAt = listStartedAt;
   if (Array.isArray(raw['pages'])) {
     const pages = raw['pages']
       .slice(-MAX_REMEMBERED_PAGES)

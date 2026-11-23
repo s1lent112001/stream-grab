@@ -1526,6 +1526,16 @@ to the install warning and disable the extension on update until accepted).
   `pagehide` when one is waiting, and once at start when the URL changed while the page loaded
   (the navigation entry's URL differs). The service worker renames the list's page key; one told
   only at `pagehide`, after the next document's navigation, renames that page's remembered list.
+- **Page loads answered by the site's own service worker.** `webRequest` does not see requests a
+  page's service worker answers, page loads included, so on such a site (found on a real site:
+  `PerformanceNavigationTiming.workerStart > 0`) no main-frame response ever cleared the list and
+  every video of the session stayed. The content script now also reports its document as it
+  starts (`load`, `at` = `performance.timeOrigin` + `activationStart`; a prerendered page only
+  once shown, and the router ignores `documentLifecycle: 'prerender'` senders). The list keeps
+  when it started (`listStartedAt`: the main-frame response's `timeStamp`, or a change's `at`).
+  A `load` that started later than the list was not seen loading: the list starts anew as on a
+  navigation (nothing remembered comes back; the streams it requested from `at` on stay). One
+  that started earlier was seen: only the list's page key follows the URL the page has now.
 - **Where a change starts** (`at`): what the tab finds from then on belongs to the new page. A
   traversal or restore starts with itself. A single-page site often loads the next video between
   the user's click and the URL change, so a `push` starts at the last `pointerdown`/`keydown` in
@@ -1562,6 +1572,9 @@ full navigation, `pending` re-checked, 8 pages across a restart, a tab whose fir
 was not seen; store: `listKey` and `pages`). End to end
 (`/files/history/*`): a single-page site's second page, Back, Forward, then a page without a
 video and Back from the back/forward cache, each listing only its page's video; it fails on 1.2.0.
+A second (`/files/sw-site/*`): a site whose service worker passes its page loads on with `fetch`;
+the next page's load (`workerStart > 0`) lists only its own video. It failed before the `load`
+report.
 
 ## Known limitations
 
