@@ -18,6 +18,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.1.0 | Junk filter, Settings in sections (below) |
 | v1.2.0 | Video previews instead of the static icon (below) |
 | v1.2.1 | Fix: after Back/Forward, on single-page sites and on sites whose service worker loads their pages, the list showed videos of other pages. Released 2026-11-24 |
+| v1.2.2 | Junk filter hides a page's grid of previews (no length threshold); hidden videos in a folded section after the list. Released 2026-11-24 |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | UI redesign: a simpler popup with fewer tabs, for every feature up to v1.3.0 (below) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |

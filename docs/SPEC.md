@@ -125,7 +125,10 @@ pending, downloading, processing, completed and failed.
 - Detected Videos: detected sources with protocol and quality; individual or multiple
   selection; Download button. Likely ads, thumbnails and hover previews are hidden by a cautious
   filter (known ad host, or short plus one weak signal; never live streams or videos of a minute
-  or more); a "N ads or previews hidden · Show" line brings them back until the popup closes.
+  or more), and so is a page's grid of previews (1.2.2: three or more videos of one family and
+  picture height whose paths name a preview, or which all have the same length); they are listed
+  in a folded "N hidden as likely ads or previews" section after the list, which stays open until
+  the popup closes. "Select all" ticks the list only.
   Each video shows a preview picture (page poster, the player's current frame, a frame made from
   the file or one segment, or a picture the page declares for the video) instead of the icon;
   DRM streams get only a picture the page gives, and no FFmpeg is used for previews.

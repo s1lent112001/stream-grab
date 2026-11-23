@@ -22,6 +22,14 @@ import { parseHttpUrl } from '@/shared/utils/url';
  *   video, a video LONG_HINT_SEC or longer (its own length, else its
  *   `<video>` element's). An ad host hides even then, but never the only
  *   video or a live stream.
+ * - A preview grid (1.2.2): FAMILY_MIN or more different videos of one
+ *   family (same host, same folder name once numbers are left out, same
+ *   depth, same file type) and one picture height, whose paths all name a
+ *   preview (each shorter than LONG_HINT_SEC), or whose lengths are all the
+ *   same (within sameLengthSec, at any length: a page's real videos do not
+ *   come in batches cut to one length; its previews do). Real videos cut to
+ *   one length (story segments, stock clips) can be hidden too; "Show"
+ *   lists them.
  */
 
 /** A video this long or shorter counts as short. */
@@ -166,6 +174,102 @@ export function hiddenReason(stream: DetectedStream, context: JunkContext): Hidd
   return undefined;
 }
 
+/** This many different videos of one family make a preview grid (1.2.2). */
+export const FAMILY_MIN = 3;
+
+/** Lengths this close count as the same: 1 s, or 2% of a longer video, at most 3 s (keyframe-cut previews vary a little). */
+function sameLengthSec(durationSec: number): number {
+  return Math.min(3, Math.max(1, durationSec * 0.02));
+}
+
+/** Path words that name a quality or an encoding, not a video: `720p`, `1280x720`, `720`, `2500k`, `b1500000`, `hd`, `hevc`. */
+const QUALITY_WORD =
+  /^(?:\d{3,4}p\d*|\d{2,5}x\d{2,5}|\d+k(?:bps)?|b\d{3,}|p?(?:144|240|270|360|480|540|576|720|1080|1440|2160)p?|4k|hd|sd|hq|lq|fhd|uhd|low|high|medium|mobile|[hx]26[45]|hevc|avc1?|av1|vp[89])$/;
+
+interface FamilyMember {
+  index: number;
+  /** The video: its host and path without quality words, so the qualities of one video count once. */
+  video: string;
+  durationSec?: number;
+  /** Best picture height; the previews of a grid share one, the qualities of one video do not. */
+  height?: number;
+  /** File size: two URLs of one file (a token in the path) have the same. */
+  bytes?: number;
+  pathWord: boolean;
+}
+
+/**
+ * The family of a stream: host, depth, folder name with numbers left out, file type. Other folders
+ * are left out: grids keep each preview under its own id folders (`/a1/b2c3/…-preview/clip.mp4`).
+ */
+function familyOf(stream: DetectedStream, index: number): [string, FamilyMember] | undefined {
+  const parsed = parseHttpUrl(stream.url);
+  if (parsed === null) return undefined;
+  let path = parsed.pathname.toLowerCase();
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // keep the encoded path
+  }
+  const segments = path.split('/').filter((segment) => segment.length > 0);
+  const name = segments.at(-1) ?? '';
+  const folder = (segments.at(-2) ?? '').replace(/\d+/g, '#');
+  const type = /\.([a-z0-9]+)$/.exec(name)?.[1] ?? '';
+  const host = parsed.hostname.toLowerCase();
+  const video = `${host}${path.split(/([^a-z0-9]+)/).filter((part) => !QUALITY_WORD.test(part)).join('')}`;
+  const durationSec = stream.media?.durationSec ?? stream.progressive?.durationSec;
+  const member: FamilyMember = { index, video, pathWord: previewPathWord(stream.url) !== undefined };
+  if (durationSec !== undefined) member.durationSec = durationSec;
+  const height = bestHeight(stream);
+  if (height !== undefined) member.height = height;
+  if (stream.progressive?.bytes !== undefined) member.bytes = stream.progressive.bytes;
+  return [`${host}\n${segments.length}\n${folder}\n${type}`, member];
+}
+
+/** How many different videos: by path without quality words, and by file size when every size is known. */
+function differentVideos(members: readonly FamilyMember[]): number {
+  const paths = new Set(members.map((member) => member.video)).size;
+  if (!members.every((member) => member.bytes !== undefined)) return paths;
+  return Math.min(paths, new Set(members.map((member) => member.bytes)).size);
+}
+
+/** The members that make a batch: FAMILY_MIN or more different videos of one picture height. */
+function batch(members: readonly FamilyMember[]): FamilyMember[] {
+  const byHeight = new Map<number | undefined, FamilyMember[]>();
+  for (const member of members) byHeight.set(member.height, [...(byHeight.get(member.height) ?? []), member]);
+  return [...byHeight.values()].filter((group) => differentVideos(group) >= FAMILY_MIN).flat();
+}
+
+/**
+ * Indexes of the streams that belong to a preview grid (1.2.2): FAMILY_MIN or more different
+ * videos of one family and one picture height whose paths all name a preview (and are shorter
+ * than LONG_HINT_SEC, or not inspected yet), or whose own lengths are all the same (any length).
+ * The `<video>` element's length is not used: it belongs to the frame, not to one stream.
+ */
+export function previewGrid(streams: readonly DetectedStream[]): Set<number> {
+  const families = new Map<string, FamilyMember[]>();
+  streams.forEach((stream, index) => {
+    if (stream.manifest?.live === true) return;
+    const found = familyOf(stream, index);
+    if (found === undefined) return;
+    const [key, member] = found;
+    families.set(key, [...(families.get(key) ?? []), member]);
+  });
+  const grid = new Set<number>();
+  for (const members of families.values()) {
+    const named = members.filter((member) => member.pathWord && (member.durationSec === undefined || member.durationSec < LONG_HINT_SEC));
+    for (const member of batch(named)) grid.add(member.index);
+    const timed = members.filter((member) => member.durationSec !== undefined).sort((a, b) => (a.durationSec ?? 0) - (b.durationSec ?? 0));
+    for (let start = 0; start < timed.length; start++) {
+      const first = timed[start]?.durationSec ?? 0;
+      let end = start;
+      while (end + 1 < timed.length && (timed[end + 1]?.durationSec ?? 0) - first <= sameLengthSec(first)) end++;
+      for (const member of batch(timed.slice(start, end + 1))) grid.add(member.index);
+    }
+  }
+  return grid;
+}
+
 /** Larger is a better guess at the page's main video: longer, else bigger file, else higher picture, else seen first. */
 function mainVideoScore(stream: DetectedStream): [number, number, number, number] {
   return [knownDurationSec(stream) ?? -1, stream.progressive?.bytes ?? -1, bestHeight(stream) ?? -1, -stream.firstSeen];
@@ -186,14 +290,22 @@ function better(a: DetectedStream, b: DetectedStream): boolean {
  * from an ad host first). Entries of one video that are not folded yet (a link and its redirect
  * target, a master's playlists still pending) or a second hover preview so never empty the list,
  * and the first preview listed does not vanish when the next one appears unless a real video does.
+ * Once the filter has hidden something on the page, the entry it kept stays (1.2.2): the stream
+ * listed now, seen first, is kept over a better guess, so a page of previews does not swap its one
+ * entry each time an inspection finishes or another preview appears.
  */
 export function junkMarks(streams: readonly DetectedStream[]): (HiddenReason | undefined)[] {
-  const marks = streams.map((stream) => hiddenReason(stream, { onlyVideo: streams.length === 1 }));
+  const grid = previewGrid(streams);
+  const marks = streams.map((stream, index) => hiddenReason(stream, { onlyVideo: streams.length === 1 }) ?? (grid.has(index) ? 'preview-grid' : undefined));
   if (streams.length < 2 || marks.some((mark) => mark === undefined)) return marks;
-  const pool = streams.filter((_stream, index) => marks[index] !== 'ad-host');
+  const notAds = streams.filter((_stream, index) => marks[index] !== 'ad-host');
+  const pool = notAds.length > 0 ? notAds : streams;
+  const listed = pool.filter((stream) => stream.hidden === undefined);
   let keep: DetectedStream | undefined;
-  for (const stream of pool.length > 0 ? pool : streams) {
-    if (keep === undefined || better(stream, keep)) keep = stream;
+  if (listed.length > 0 && streams.some((stream) => stream.hidden !== undefined)) {
+    for (const stream of listed) if (keep === undefined || stream.firstSeen < keep.firstSeen) keep = stream;
+  } else {
+    for (const stream of pool) if (keep === undefined || better(stream, keep)) keep = stream;
   }
   return marks.map((mark, index) => (streams[index] === keep ? undefined : mark));
 }

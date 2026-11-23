@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-24
+
+### Changed
+
+- Hidden ads and previews now sit in their own folded section at the end of the Detected list
+  ("N hidden as likely ads or previews"), instead of mixing into the list when shown. "Select all"
+  ticks the videos of the list only; a hidden one can still be ticked by hand.
+
+### Fixed
+
+- The junk filter now hides a page's grid of hover previews. Three or more different videos of
+  one family (same host, same folder name, same file type, same picture height) are hidden when
+  their paths all name a preview and each is under a minute, or when they all have the same
+  length, however long. Before, a preview a moment longer than 15 seconds was always listed, so a
+  page of 15.1-second previews listed every one. The qualities of one video are never taken for a
+  grid. Real videos cut to one length (story segments, stock clips) may be hidden too; "Show"
+  lists them.
+- On a page with only previews, the one entry the filter keeps listed no longer changes each time
+  another preview appears or finishes inspection.
+
 ## [1.2.1] - 2026-11-24
 
 ### Fixed

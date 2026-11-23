@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hiddenReason, isAdHost, junkMarks, previewPathWord } from '@/core/detection/junk-filter';
+import { hiddenReason, isAdHost, junkMarks, previewGrid, previewPathWord } from '@/core/detection/junk-filter';
 import type { DetectedStream, ProgressiveInfo } from '@/core/models/detected-stream';
 
 const several = { onlyVideo: false };
@@ -150,5 +150,111 @@ describe('junkMarks (1.1.0)', () => {
     expect(junkMarks([ad, preview(1, 300_000)])).toEqual(['ad-host', undefined]);
     const otherAd = file('https://ads.teads.tv/v/creative.mp4', { durationSec: 20 }, { id: 'ad2', firstSeen: 1 });
     expect(junkMarks([ad, otherAd])).toEqual([undefined, 'ad-host']);
+  });
+});
+
+describe('previewGrid (1.2.2)', () => {
+  const at = (n: number, url: string, info: Partial<ProgressiveInfo>) => file(url, info, { id: `s${n}`, firstSeen: n });
+  const hidden = (marks: readonly (string | undefined)[]) => marks.filter((mark) => mark !== undefined).length;
+
+  it('hides a page of 15.1-second 720p previews, each under its own id folders (a reported page)', () => {
+    // The page had 32 of them, 2-7 MB, a few tenths of a second apart, and no main video.
+    const folders = ['ab/cd1', '1e/2fg3h', 'i4/j56k', 'lm/no7pq', '8r/9st0', 'uv/wx1y', 'z2/a34bc', 'de/fgh'];
+    const previews = folders.map((folder, n) =>
+      at(n, `https://media.cdn.example/hd/${folder}/hdxx-preview/hd_teasers_preview_v2_h-264-720.mp4`, {
+        durationSec: n % 3 === 0 ? 15.02 : 15.1,
+        bytes: 2e6 + n * 7e5,
+        width: 1280,
+        height: 720,
+      }),
+    );
+    const marks = junkMarks(previews);
+    // Every one is a preview; the page still lists its best guess (the longest, then biggest).
+    expect(hidden(marks)).toBe(previews.length - 1);
+    expect(marks.filter((mark) => mark !== undefined).every((mark) => mark === 'preview-grid')).toBe(true);
+    // Next to a real video, they all go.
+    const movie = at(99, 'https://media.cdn.example/hd/ab/cd1/hd_movie_h-264-720.mp4', { durationSec: 1_500, bytes: 4e8, height: 720 });
+    expect(junkMarks([...previews, movie])).toEqual([...previews.map(() => 'preview-grid'), undefined]);
+  });
+
+  it('hides previews named in the path, of different lengths under a minute, once there are enough of them', () => {
+    const named = [1, 2, 3].map((n) => at(n, `https://cdn.example/v${n}/previews/clip${n}.mp4`, { durationSec: 5 + n * 15, bytes: n * 3e6, height: 720 }));
+    expect([...previewGrid(named)]).toEqual([0, 1, 2]);
+    // Pending ones too: the mark does not change when the inspection ends.
+    expect([...previewGrid(named.map((stream) => ({ ...stream, status: 'pending' as const, progressive: { container: 'mp4' as const } })))]).toEqual([0, 1, 2]);
+    // Two are not a grid.
+    expect(previewGrid(named.slice(0, 2)).size).toBe(0);
+    // A minute or longer, a path word is not enough: full videos kept under /previews/ stay listed.
+    const long = [300, 900, 1_500].map((durationSec, n) => at(n, `https://cdn.example/v${n}/previews/film${n}.mp4`, { durationSec, bytes: (n + 1) * 1e8, height: 720 }));
+    expect(previewGrid(long).size).toBe(0);
+  });
+
+  it('hides a batch cut to one length, but not the real video of the same folders', () => {
+    const lengths = [45.2, 44.6, 45.9, 45];
+    const batch = lengths.map((durationSec, n) => at(n, `https://cdn.example/v/${n}a${n}/clip.mp4`, { durationSec, bytes: 6e6 + n * 1e5, height: 720 }));
+    const movie = at(9, 'https://cdn.example/v/9a9/clip.mp4', { durationSec: 2_400, bytes: 9e8, height: 1080 });
+    expect([...previewGrid([...batch, movie])].sort()).toEqual([0, 1, 2, 3]);
+    // Long previews may differ by a keyframe or two.
+    const long = [180, 182.5, 181].map((durationSec, n) => at(n, `https://cdn.example/v/${n}/clip.mp4`, { durationSec }));
+    expect(previewGrid(long).size).toBe(3);
+  });
+
+  it('lists videos of one folder with different lengths, and the qualities of one video', () => {
+    const various = [12, 40, 95, 300].map((durationSec, n) => at(n, `https://cdn.example/v/${n}/clip.mp4`, { durationSec, bytes: 2e6 }));
+    expect(previewGrid(various).size).toBe(0);
+    const qualities = ['360p', '480p', '720p', '1080p'].map((quality, n) => at(n, `https://cdn.example/v/abc/movie_${quality}.mp4`, { durationSec: 600 }));
+    expect(previewGrid(qualities).size).toBe(0);
+    const renditions = ['360', '720', '1080'].map((height, n) => hls(`https://cdn.example/v/abc/${height}/index.m3u8`, 600, [Number(height)], { id: `r${n}` }));
+    expect(previewGrid(renditions).size).toBe(0);
+  });
+
+  it('lists the qualities of one video whatever they are named after: each has its own picture height', () => {
+    const shapes: [string, number][][] = [
+      // Width and frame rate in the name
+      [['https://videos.example/video-files/123/123-hd_1920_1080_25fps.mp4', 1080], ['https://videos.example/video-files/123/123-hd_1280_720_25fps.mp4', 720], ['https://videos.example/video-files/123/123-sd_640_360_25fps.mp4', 360]],
+      // A random name under a size folder
+      [['https://video.example/vid/avc1/1280x720/AbC.mp4', 720], ['https://video.example/vid/avc1/640x360/XyZ.mp4', 360], ['https://video.example/vid/avc1/480x270/QqQ.mp4', 270]],
+      // A bitrate
+      [['https://cdn.example/v/movie_1500.mp4', 720], ['https://cdn.example/v/movie_800.mp4', 480], ['https://cdn.example/v/movie_400.mp4', 360]],
+    ];
+    for (const shape of shapes) {
+      const qualities = shape.map(([url, height], n) => at(n, url, { durationSec: 600, bytes: height * 1e6, height }));
+      expect(previewGrid(qualities).size).toBe(0);
+    }
+    // Encodings of one picture size count as one video.
+    const codecs = ['hevc', 'h264', 'av1'].map((codec, n) => at(n, `https://cdn.example/v/movie-720p-${codec}.mp4`, { durationSec: 600, bytes: (n + 1) * 1e8, height: 720 }));
+    expect(previewGrid(codecs).size).toBe(0);
+    // One file under several token paths has one size.
+    const tokens = ['t1a', 't2b', 't3c'].map((token, n) => at(n, `https://cdn.example/${token}/v/clip.mp4`, { durationSec: 600, bytes: 5e8, height: 720 }));
+    expect(previewGrid(tokens).size).toBe(0);
+  });
+
+  it('marks a grid next to a video still being inspected, and keeps the qualities of a video next to a clip', () => {
+    const previews = [1, 2, 3].map((n) => at(n, `https://cdn.example/p/${n}/teaser.mp4`, { durationSec: 30.1, bytes: n * 2e6, height: 480 }));
+    const pending = file('https://cdn.example/watch/main.m3u8', {}, { id: 'main', protocol: 'hls', status: 'pending', firstSeen: 0 });
+    expect(junkMarks([pending, ...previews])).toEqual([undefined, 'preview-grid', 'preview-grid', 'preview-grid']);
+    const qualities = [1080, 720, 480].map((height, n) => at(10 + n, `https://cdn.example/v/abc/movie_${height * 2}.mp4`, { durationSec: 600, bytes: height * 1e6, height }));
+    const clip = at(20, 'https://cdn.example/clips/other.mp4', { durationSec: 40, bytes: 5e6, height: 720 });
+    expect(junkMarks([...qualities, clip])).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it('keeps the entry it listed on a page of previews while more of them appear or finish inspection', () => {
+    const preview = (n: number, durationSec: number, bytes: number) => at(n, `https://cdn.example/p/${n}/teaser.mp4`, { durationSec, bytes, height: 480 });
+    const marked = (stream: DetectedStream, hidden: 'preview-grid'): DetectedStream => ({ ...stream, hidden });
+    // The first pass keeps the best guess (the longest).
+    const first = [preview(1, 15.02, 2e6), preview(2, 15.1, 3e6), preview(3, 15.05, 4e6)];
+    expect(junkMarks(first)).toEqual(['preview-grid', undefined, 'preview-grid']);
+    // A longer, bigger preview appears later: the entry listed stays.
+    const later = [marked(first[0]!, 'preview-grid'), first[1]!, marked(first[2]!, 'preview-grid'), preview(4, 15.6, 9e6)];
+    expect(junkMarks(later)).toEqual(['preview-grid', undefined, 'preview-grid', 'preview-grid']);
+  });
+
+  it('needs one host and one folder name, and never counts a live stream', () => {
+    const hosts = ['a.example', 'b.example', 'c.example'].map((host, n) => at(n, `https://${host}/preview/${n}.mp4`, { durationSec: 30 }));
+    expect(previewGrid(hosts).size).toBe(0);
+    const folders = ['one', 'two', 'three'].map((folder, n) => at(n, `https://cdn.example/${folder}/${n}.mp4`, { durationSec: 30 }));
+    expect(previewGrid(folders).size).toBe(0);
+    const live = [1, 2, 3].map((n) => hls(`https://cdn.example/thumb/${n}/live.m3u8`, undefined, [144], { manifest: { role: 'media', live: true, drmSystems: [], encryption: 'none' } }));
+    expect(previewGrid(live).size).toBe(0);
   });
 });

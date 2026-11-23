@@ -164,8 +164,10 @@ export interface MediaSummary {
  * - `short-clip`:   short, with another sign of a preview or ad (path word, small file, low resolution)
  * - `preview-path`: still being inspected, and its path names a thumbnail, preview, sprite or ad;
  *                   decided again once the inspection says how long it is
+ * - `preview-grid`: one of a batch of previews (1.2.2): several videos of one family whose paths
+ *                   name a preview, or which all have the same length
  */
-export const HIDDEN_REASONS = ['ad-host', 'short-clip', 'preview-path'] as const;
+export const HIDDEN_REASONS = ['ad-host', 'short-clip', 'preview-path', 'preview-grid'] as const;
 export type HiddenReason = (typeof HIDDEN_REASONS)[number];
 
 export interface DetectedStream {

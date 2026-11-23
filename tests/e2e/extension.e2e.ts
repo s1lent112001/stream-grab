@@ -716,13 +716,12 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       await worker?.evaluate(() => chrome.action.openPopup());
       const popupTarget = await browser.waitForTarget((target) => !known.has(target) && target.url().includes('/popup/index.html'), { timeout: 10_000 });
       const popup = await popupTarget.asPage();
-      await popup.waitForFunction(() => document.body.innerText.includes('2 ads or previews hidden'), { timeout: 10_000 });
+      await popup.waitForFunction(() => document.body.innerText.includes('2 hidden as likely ads or previews'), { timeout: 10_000 });
       expect(await popup.$$eval('li[data-stream-id]', (rows) => rows.length)).toBe(1);
-      await popup.evaluate(() => {
-        [...document.querySelectorAll('button')].find((button) => button.textContent === 'Show')?.click();
-      });
-      await popup.waitForFunction(() => document.querySelectorAll('li[data-stream-id]').length === 3, { timeout: 10_000 });
-      expect(await popup.evaluate(() => document.body.innerText)).toContain('Likely an ad');
+      await popup.click('#hidden-streams-toggle');
+      // The hidden ones open in their own section after the list (1.2.2).
+      await popup.waitForFunction(() => document.querySelectorAll('#hidden-streams li[data-stream-id]').length === 2, { timeout: 10_000 });
+      expect(await popup.$eval('#hidden-streams', (section) => (section as HTMLElement).innerText)).toContain('Likely an ad');
       await popup.close();
     }
 

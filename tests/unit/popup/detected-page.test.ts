@@ -318,27 +318,44 @@ describe('Detected tab: hidden ads and previews (1.1.0)', () => {
     return { ...chrome, view, titles };
   }
 
-  it('leaves them out of the list and Select all, and shows them on request with the reason', async () => {
+  const TOGGLE = '2 hidden as likely ads or previews';
+
+  it('leaves them out of the list and Select all, and shows them in their own section after it', async () => {
     const { view, titles, sent } = await open();
     expect(titles()).toEqual(['Movie Title']);
-    expect(view.container.textContent).toContain('2 ads or previews hidden');
+    const toggle = view.container.querySelector('#hidden-streams-toggle');
+    expect(toggle?.textContent).toBe(TOGGLE);
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
     expect(view.container.textContent).toContain('1 stream');
 
-    await click(view.container, 'Show');
+    await click(view.container, TOGGLE);
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
     expect(titles()).toEqual(['Movie Title', 'Sponsored', 'Hover preview']);
-    expect(view.container.textContent).toContain('2 ads or previews shown');
+    const section = view.container.querySelector('#hidden-streams');
+    expect(section?.textContent).toContain('Sponsored');
+    expect(section?.textContent).not.toContain('Movie Title');
     const rows = [...view.container.querySelectorAll('li')];
     expect(rows[1]?.textContent).toContain('Likely an ad');
     expect(rows[2]?.textContent).toContain('Likely a preview');
 
-    // A hidden video ticked while shown is dropped when they are hidden again, also from Select all.
-    await check(view.container.querySelector('input#select-ad'));
-    await click(view.container, 'Hide');
-    expect(titles()).toEqual(['Movie Title']);
-    await check(view.container.querySelector('input[aria-label="Select all downloadable videos"]'));
-    await click(view.container, 'Show');
+    // Select all ticks the list, not the section; a hidden one can still be ticked by hand.
+    const selectAll = () => view.container.querySelector<HTMLInputElement>('input[aria-label="Select all downloadable videos"]');
+    await check(selectAll());
+    expect(view.container.querySelector<HTMLInputElement>('input#select-first')?.checked).toBe(true);
     expect(view.container.querySelector<HTMLInputElement>('input#select-ad')?.checked).toBe(false);
-    await click(view.container, 'Hide');
+    await check(view.container.querySelector('input#select-ad'));
+    expect(selectAll()?.checked).toBe(true);
+    // Unticking Select all leaves the hand-picked one.
+    await check(selectAll());
+    expect(view.container.querySelector<HTMLInputElement>('input#select-ad')?.checked).toBe(true);
+
+    // A hidden video ticked while shown is dropped when the section folds.
+    await click(view.container, TOGGLE);
+    expect(titles()).toEqual(['Movie Title']);
+    await check(selectAll());
+    await click(view.container, TOGGLE);
+    expect(view.container.querySelector<HTMLInputElement>('input#select-ad')?.checked).toBe(false);
+    await click(view.container, TOGGLE);
     const download = [...view.container.querySelectorAll('button')].find((button) => button.textContent?.includes('Download') && button.textContent.includes('1'));
     await act(async () => {
       download?.click();
@@ -354,8 +371,8 @@ describe('Detected tab: hidden ads and previews (1.1.0)', () => {
     });
     const view = await render(DetectedPage, { onShowQueue: () => undefined });
     unmount = () => view.root.unmount();
-    expect(view.container.textContent).toContain('Only ads or previews found');
-    expect(view.container.textContent).toContain('1 ad or preview hidden');
+    expect(view.container.textContent).toContain('only ads or previews');
+    expect(view.container.querySelector('#hidden-streams-toggle')?.textContent).toBe('1 hidden as likely an ad or a preview');
   });
 
   it('lists everything without the line when the setting is off', async () => {

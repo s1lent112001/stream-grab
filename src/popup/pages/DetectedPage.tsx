@@ -8,6 +8,7 @@ import { errorMessage } from '@/shared/utils/errors';
 import { parseSubtitleLanguages } from '@/shared/settings/settings';
 import { parseHttpUrl } from '@/shared/utils/url';
 import { EmptyState } from '../components/EmptyState';
+import { Icon } from '../components/Icon';
 import { SelectionBar } from '../components/SelectionBar';
 import { StreamCard } from '../components/StreamCard';
 import { useActiveTab } from '../hooks/useActiveTab';
@@ -62,7 +63,7 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
   const [ownShowHidden, setOwnShowHidden] = useState(false);
   const showHidden = props.showHidden ?? ownShowHidden;
   const setShowHidden = props.onShowHiddenChange ?? setOwnShowHidden;
-  const list = useRef<HTMLUListElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   /** Stream vừa vào hàng đợi, chờ lần vẽ tiếp theo để bay (thông báo phía trên làm các dòng dịch xuống). */
   const pendingGrab = useRef<readonly string[] | null>(null);
   useLayoutEffect(() => {
@@ -101,9 +102,13 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
     );
   }
 
-  const hideJunk = (settings?.hideJunk ?? true) && !showHidden;
-  const streams = listedStreams(detections.streams, hideJunk);
-  const hiddenCount = detections.streams.filter((stream) => stream.hidden !== undefined).length;
+  // With the filter on, the hidden ads and previews sit in their own folded section after the list
+  // (1.2.2); "Select all" covers the list only.
+  const filterOn = settings?.hideJunk ?? true;
+  const mainStreams = listedStreams(detections.streams, filterOn);
+  const hiddenStreams = filterOn ? detections.streams.filter((stream) => stream.hidden !== undefined) : [];
+  const hiddenCount = hiddenStreams.length;
+  const streams = showHidden ? [...mainStreams, ...hiddenStreams] : mainStreams;
   const preference = settings?.preferredResolution ?? 'highest';
   const extension = extensionFor(settings?.outputFormat ?? 'auto');
   const subtitles = {
@@ -113,6 +118,7 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
   } as const;
   const availability = new Map(streams.map((stream) => [stream.id, downloadAvailability(stream)]));
   const selectableIds = streams.filter((stream) => availability.get(stream.id)?.ok).map((stream) => stream.id);
+  const mainSelectableIds = mainStreams.filter((stream) => availability.get(stream.id)?.ok).map((stream) => stream.id);
   // Streams that disappeared or became unavailable drop out of the selection by themselves.
   const effectiveSelection = new Set(selectableIds.filter((id) => selected.has(id)));
   // Tiêu đề trùng nhau (vd. nhiều stream của cùng một trang): hiện tên file manifest để phân biệt.
@@ -178,6 +184,44 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
     run(sendToBackground('detections/clear', { tabId: tab.tabId }));
   };
 
+  const toggleHidden = () => {
+    if (showHidden) {
+      // Folded again: a hidden video ticked while shown must not come back ticked.
+      const hiddenIds = new Set(hiddenStreams.map((stream) => stream.id));
+      setSelected((previous) => new Set([...previous].filter((id) => !hiddenIds.has(id))));
+    }
+    setShowHidden(!showHidden);
+  };
+
+  const card = (stream: DetectedStream) => (
+    <StreamCard
+      key={stream.id}
+      stream={stream}
+      availability={availability.get(stream.id) ?? { ok: false, reason: '' }}
+      selected={effectiveSelection.has(stream.id)}
+      onSelect={(include) => {
+        setSelected((previous) => toggle(previous, stream.id, include));
+      }}
+      choice={choiceOf(stream)}
+      onChoiceChange={(choice) => {
+        setChoices((previous) => ({ ...previous, [stream.id]: choice }));
+      }}
+      expanded={expanded.has(stream.id)}
+      onToggleExpanded={() => {
+        setExpanded((previous) => toggle(previous, stream.id, !previous.has(stream.id)));
+      }}
+      extension={stream.progressive ? `.${stream.progressive.container}` : extension}
+      subtitles={subtitles}
+      onDownload={() => {
+        startDownloads([stream.id]);
+      }}
+      busy={busy}
+      error={failures[stream.id]}
+      onRemove={remove}
+      showSource={(labelCounts.get(streamLabel(stream)) ?? 0) > 1}
+    />
+  );
+
   const detectionOff = settings?.autoDetect === false;
   const httpPage = tab.url === undefined || parseHttpUrl(tab.url) !== null;
   const blockedPage = isBlockedUrl(tab.url);
@@ -220,39 +264,12 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
         </div>
       )}
 
-      {!blockedPage && hiddenCount > 0 && settings?.hideJunk !== false && (
-        <p className="mx-4 mt-2 flex items-center gap-1.5 text-meta text-muted">
-          <span>
-            {hiddenCount} {hiddenCount === 1 ? 'ad or preview' : 'ads or previews'} {showHidden ? 'shown' : 'hidden'}
-          </span>
-          <span aria-hidden="true">·</span>
-          <button
-            type="button"
-            onClick={() => {
-              if (showHidden) {
-                // Hidden again: a hidden video ticked while shown must not come back ticked.
-                const hiddenIds = new Set(detections.streams.flatMap((stream) => (stream.hidden !== undefined ? [stream.id] : [])));
-                setSelected((previous) => new Set([...previous].filter((id) => !hiddenIds.has(id))));
-              }
-              setShowHidden(!showHidden);
-            }}
-            aria-pressed={showHidden}
-            className="cursor-pointer font-semibold text-ink underline-offset-2 hover:underline"
-          >
-            {showHidden ? 'Hide' : 'Show'}
-          </button>
-        </p>
-      )}
       {blockedPage ? (
         <EmptyState title="This site is not supported" icon="off">
           {BLOCKED_SITE_MESSAGE} Videos on it are not detected or downloaded.
         </EmptyState>
-      ) : streams.length === 0 ? (
-        hiddenCount > 0 ? (
-          <EmptyState title="Only ads or previews found" icon="search">
-            Nothing else on this page looks like a video yet. Play the video you want, or show the hidden ones.
-          </EmptyState>
-        ) : httpPage ? (
+      ) : mainStreams.length === 0 && hiddenCount === 0 ? (
+        httpPage ? (
           <EmptyState title="No streams detected on this page yet" icon="search">
             Start playing a video. Supported streams appear here as soon as the page loads them.
           </EmptyState>
@@ -262,12 +279,16 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
       ) : (
         <>
           <SelectionBar
-            total={streams.length}
+            total={mainStreams.length}
             selectable={selectableIds.length}
             selected={effectiveSelection.size}
-            state={selectAllState(selectableIds, effectiveSelection)}
+            state={selectAllState(mainSelectableIds, effectiveSelection)}
             onSelectAll={(select) => {
-              setSelected(select ? new Set(selectableIds) : new Set());
+              setSelected((previous) => {
+                const next = new Set([...previous].filter((id) => !mainSelectableIds.includes(id)));
+                if (select) for (const id of mainSelectableIds) next.add(id);
+                return next;
+              });
             }}
             onDownload={() => {
               startDownloads([...effectiveSelection]);
@@ -275,36 +296,38 @@ export function DetectedPage({ onShowQueue, onQueued, onQueueing, onQueueAborted
             onClear={clear}
             busy={busy}
           />
-          <ul ref={list} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pb-2">
-            {streams.map((stream) => (
-              <StreamCard
-                key={stream.id}
-                stream={stream}
-                availability={availability.get(stream.id) ?? { ok: false, reason: '' }}
-                selected={effectiveSelection.has(stream.id)}
-                onSelect={(include) => {
-                  setSelected((previous) => toggle(previous, stream.id, include));
-                }}
-                choice={choiceOf(stream)}
-                onChoiceChange={(choice) => {
-                  setChoices((previous) => ({ ...previous, [stream.id]: choice }));
-                }}
-                expanded={expanded.has(stream.id)}
-                onToggleExpanded={() => {
-                  setExpanded((previous) => toggle(previous, stream.id, !previous.has(stream.id)));
-                }}
-                extension={stream.progressive ? `.${stream.progressive.container}` : extension}
-                subtitles={subtitles}
-                onDownload={() => {
-                  startDownloads([stream.id]);
-                }}
-                busy={busy}
-                error={failures[stream.id]}
-                onRemove={remove}
-                showSource={(labelCounts.get(streamLabel(stream)) ?? 0) > 1}
-              />
-            ))}
-          </ul>
+          <div ref={list} className="min-h-0 flex-1 overflow-y-auto pb-2">
+            {mainStreams.length > 0 ? (
+              <ul className="space-y-0.5">{mainStreams.map(card)}</ul>
+            ) : (
+              <p className="mx-4 mt-1 mb-2 text-ui leading-normal text-muted">
+                Nothing on this page looks like a video yet, only ads or previews. Play the video you want.
+              </p>
+            )}
+            {hiddenCount > 0 && (
+              <section aria-labelledby="hidden-streams-toggle" className="mt-2 border-t border-line pt-2">
+                <button
+                  id="hidden-streams-toggle"
+                  type="button"
+                  aria-expanded={showHidden}
+                  aria-controls="hidden-streams"
+                  onClick={toggleHidden}
+                  className="mx-3 flex w-[calc(100%-1.5rem)] cursor-pointer items-center gap-2 rounded-field px-2 py-2 text-left text-meta text-muted transition-colors duration-120 ease-out hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-strong"
+                >
+                  <Icon
+                    name="chevron"
+                    className={`size-[13px] shrink-0 transition-transform duration-150 motion-reduce:transition-none ${showHidden ? '' : '-rotate-90'}`}
+                  />
+                  <span className="flex-1">
+                    <span className="font-semibold text-ink tabular-nums">{hiddenCount}</span> hidden as likely {hiddenCount === 1 ? 'an ad or a preview' : 'ads or previews'}
+                  </span>
+                </button>
+                <ul id="hidden-streams" hidden={!showHidden} className="mt-1 space-y-0.5">
+                  {showHidden && hiddenStreams.map(card)}
+                </ul>
+              </section>
+            )}
+          </div>
         </>
       )}
     </div>
