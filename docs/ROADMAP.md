@@ -262,9 +262,60 @@ Phases (one session each, checks and e2e at the end of each):
 **v1.2.0: video previews.** A picture for each detected video instead of the static icon, in this
 order: (C) the `poster` of the page's `<video>`; (A) a frame of an MP4 / WebM file, read by a hidden
 video element in the offscreen document (with the page's Referer); (B) a frame of the first HLS / DASH
-video segment (with its init segment for fMP4), decoded by the bundled FFmpeg; (C) the page's
-`og:image`; then the static icon. Previews are made lazily (popup open, item visible) and cached;
-none for DRM.
+video segment (with its init segment for fMP4); (C) a picture the page declares for the video (not
+a plain `og:image`, see below); then the static icon. Previews are made lazily (popup open, item
+visible) and cached; none for DRM.
+
+Decided 2026-11-23:
+
+- **Order**: `poster` of the stream's `<video>` → a frame of an MP4 / WebM file → a frame of an
+  HLS / DASH segment → the video's picture declared by the page → the static icon. The `poster`
+  counts only when the `<video>` is known to play this stream: it points at it (`src`), or it is
+  the frame's only `<video>` (the rule `durationHint` already uses).
+- **No plain `og:image`**: it usually pictures the page (article cover, logo), not the video. The
+  last step uses only a picture the page gives for the video itself: `thumbnailUrl` of a
+  schema.org `VideoObject` (when the page has one `VideoObject`, or its name matches the video's
+  title), else `og:image` when `og:type` is `video.*` and the page has exactly one video.
+- **Frame at about 10% of the length** (at most about 60 s in), not the first frame, which is
+  often black or an intro. HLS / DASH: one segment of the **lowest** quality (little data);
+  AES-128 HLS is decrypted as for downloads; SAMPLE-AES, CENC and DRM get no preview. Live
+  streams: none.
+- **Everywhere a row has a tile**: Detected, Queue and Completed. The picture goes inside the
+  existing 52 px tile; the duration label, the lock / warning / tick overlays and the grab
+  animation stay. The v1.4.0 redesign decides the final look.
+- **No setting**: previews are always on. PRIVACY.md (local) gets a line: opening the popup may
+  fetch a picture or a small part of a video from the page's own site.
+- **Pictures from the page are untrusted**: http(s) URLs only, bounded length, `data:`
+  placeholders ignored. The offscreen document fetches them with the page's Referer and shrinks
+  them (about 104 × 104, WebP or JPEG, a few KB); the popup never loads a page's image URL itself.
+- **Cache** in the extension's IndexedDB, keyed by the stream's dedupe key, oldest dropped past
+  about 300; failures are cached too, so a video without a preview is not tried on every popup
+  open. Kept while a task in Queue or Completed still uses it.
+- **Request context**: the page's Referer must also reach the hidden video element's requests
+  (resource type `media`, today only `xmlhttprequest`); a preview takes its own short lease with
+  a timeout and is skipped rather than waiting long behind a download's lease on the same host.
+- **Decoding HLS / DASH** (settled by the Phase 1 spike): fMP4 / CMAF segments through Media
+  Source Extensions in the hidden video element (fast, no FFmpeg); MPEG-TS segments (Chrome's MSE
+  cannot read them) through FFmpeg with one output frame, never queued behind a merge (its own
+  instance, or skipped while a merge runs).
+
+Phases (one session each, checks and e2e at the end of each):
+
+1. Spike in Chrome 116 and the newest Chrome: Referer on the hidden video's `media` requests; a
+   frame at 10% of an MP4 whose index is at the end (range requests); MSE with an init segment and
+   one fMP4 segment; one frame of an MPEG-TS segment with FFmpeg (time, memory, a PNG / JPEG
+   encoder in the bundled core, running beside a merge); the popup reading a cached picture from
+   IndexedDB. Ends with the decoding route for HLS / DASH.
+2. Core: the source-order rules (pure), the content script reading `poster`, `VideoObject`
+   `thumbnailUrl`, `og:type` and `og:image` (parsed and bounded in the service worker), the
+   preview cache with failures; unit tests.
+3. Preview makers in the offscreen document: page pictures, a file frame, a segment frame; at most
+   two at a time, timeouts, cancelled when the popup closes; the preview lease.
+4. Popup: previews made when a row becomes visible, the tile showing the picture in Detected, Queue
+   and Completed; e2e fixtures (poster, MP4, HLS TS, HLS fMP4, DASH, `VideoObject`, a video page's
+   `og:image`, an article's `og:image` that is not used).
+5. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
+   draft line (GitHub only; no store upload until v1.5.0).
 
 **v1.3.0: tab recording.** "Record this tab" saves what the tab plays, for live streams and for
 players that hide their segment addresses. `chrome.tabCapture` + `MediaRecorder` in the offscreen
