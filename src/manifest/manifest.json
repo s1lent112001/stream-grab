@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "StreamGrab",
+  "name": "StreamGrab - Video Downloader",
   "short_name": "StreamGrab",
-  "description": "Detect, download and merge online media streams entirely in your browser.",
+  "description": "Video downloader for websites: pick the quality and save one MP4 file with sound and subtitles. Supports HLS (m3u8) and DASH.",
   "version": "0.0.0",
   "minimum_chrome_version": "116",
   "icons": {

@@ -9,6 +9,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The extension is named "StreamGrab - Video Downloader" in Chrome and on the store, with a
+  summary in everyday words: "Video downloader for websites: pick the quality and save one MP4
+  file with sound and subtitles. Supports HLS (m3u8) and DASH." The toolbar title stays
+  "StreamGrab".
 - The project moved to a new GitHub repository,
   [s1lent112001/stream-grab](https://github.com/s1lent112001/stream-grab). The About page, the
   README and the privacy policy link to it. Versions before 1.0.0 have no tags or release ZIPs
