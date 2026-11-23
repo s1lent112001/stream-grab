@@ -131,7 +131,7 @@ export function StreamCard(props: StreamCardProps) {
         </p>
       </div>
       <span className="col-start-2 row-start-1 flex">
-        <PosterTile host={site} state={tile} duration={duration} />
+        <PosterTile host={site} state={tile} duration={duration} preview={{ streamId: stream.id, tabId: stream.tabId, revision: stream.status }} />
       </span>
 
       {(stream.status !== 'ready' || tags.length > 0) && (

@@ -1394,6 +1394,102 @@ Testing notes: Puppeteer cannot evaluate in Chrome 116's service worker (calls n
 the harness drives an extension page; e2e fixtures for previews on Chrome 116 need WebM media, as
 Chrome for Testing 116 cannot decode the H.264 fixtures.
 
+### Preview core (Phase 2)
+
+Wired by Phase 3 (below).
+
+- **Page facts** (`content/page-metadata.ts`, checked again by `parseFrameMetadata`): each
+  `<video>` now reports `src` (its `currentSrc`, else its `src` attribute; http(s) only, so an MSE
+  player has none), up to 5 `<source>` URLs, `poster` and `hasPicture` (`readyState` ≥
+  `HAVE_CURRENT_DATA` with a picture size); each frame reports its JSON-LD `VideoObject`s (name and
+  first http(s) `thumbnailUrl`; only those with one of them, at most 10), `og:type` (lower case)
+  and `og:image`. Picture URLs are http(s), at most 2048 characters; `data:`, `blob:`, empty and
+  fragment-only references (`poster=""` would resolve to the page) are dropped, and a `<video>`'s
+  `src` is never the page's own URL.
+- **The player's frame** (`content/player-frame.ts`, message `content/getPlayerFrame` with the
+  `<video>`'s index and `src`; without `src`, an MSE player, the element at that index counts
+  only while it still has no http(s) source): the centred square drawn on a 104 × 104 canvas, a WebP data URL
+  (JPEG if WebP cannot be encoded); `not-found`, `no-picture` or `locked` (a `SecurityError`).
+  `core/preview/preview-image.ts` accepts only `data:image/webp|jpeg;base64,` of at most 32 KB
+  whose first bytes are of the declared type.
+- **Source order** (`core/preview/preview-sources.ts`, pure): the `<video>` playing the stream is
+  the one whose `src` or a `<source>` equals the stream's URL or dedupe key, else the frame's only
+  `<video>` when it has no http(s) source. Then `poster`; `player` when it has a picture and the
+  stream is not DRM / CENC (protected video draws black); `file-frame` for a ready file whose
+  server took ranges; `segment-frame` for a ready, non-live HLS / DASH stream without DRM, clear
+  or AES-128 (the maker gives up on MPEG-TS); `page-picture` from the stream's frame, else the top
+  frame: its only `VideoObject`'s `thumbnailUrl`, or the one whose name equals the `<video>`
+  element's own title (case and spaces ignored; not the stream's title, often the first
+  `VideoObject`'s name, which would give every video of the page its picture), else `og:image` when `og:type` is `video.*` and the tab lists one
+  video. A page picture equal to the poster is not tried twice.
+- **Cache** (`core/preview/preview-cache.ts`, IndexedDB `streamgrab-previews`, store `previews`,
+  index `bySavedAt`): keyed by stream id (derived from the dedupe key, kept by tasks). A record is
+  a picture (`type`, `bytes` as an `ArrayBuffer`, `source`) or a failure with the kinds it
+  `tried`. A failure is tried again when the sources offered now include a kind it did not try
+  (the player now shows a picture, the stream became ready, a page with a poster); an attempt
+  that was cancelled or timed out is not cached as a failure. `prune(keep)` drops the oldest records past 300, never a key in `keep` (tasks in Queue
+  and Completed). Records are checked on read (type by first bytes, at most 32 KB).
+
+### Preview makers and the popup (Phase 3)
+
+- **Popup** (`popup/previews.ts`): a tile (`PosterTile` with `preview`) asks for its stream's
+  picture once it is visible (IntersectionObserver). The popup reads the IndexedDB cache itself;
+  only when no picture is there does it ask the service worker over one port
+  (`streamgrab/previews`), and it reads the cache again on `ready`. A detected stream is asked
+  again when its status changes (a stream that became ready offers a made frame); a task's tile
+  asks with the task's stream id and tab. The picture is a `blob:` URL of the cached bytes; the
+  popup never loads a page's image URL. With a picture the play triangle goes; the duration label,
+  the tick and the lock / warning (on a scrim) stay.
+- **Service worker** (`background/preview-host.ts`, `core/preview/preview-runner.ts`): at most two
+  previews at a time for all popups; a popup closing disconnects its port, which cancels its
+  previews (`preview/cancel` to the offscreen document) and prunes the cache (tasks' stream ids
+  kept). The runner reads the cache, asks the stream's frame and the top frame for fresh metadata,
+  builds the source list (`previewSources`), and skips kinds a cached failure already tried. The
+  player frame comes from the content script (`content/getPlayerFrame`); everything else is a job
+  for the offscreen document (`preview/make`: `picture`, `file-frame`, `segment-frame`). A content
+  script gets 2 s to answer (a page stuck in a loop must not hold a preview slot). Not recorded as
+  tried: a timeout, a cancel, an unreachable frame, a player with no picture at that moment
+  (`not-found`, `no-picture`), and a failure that may pass (network error, HTTP 408 / 429 / 5xx;
+  the maker answers `timeout`); recorded: `locked`, an invalid answer, a source that gives no
+  picture. A stream asked again under a new revision while it is being made runs once more if
+  the first run found nothing.
+- **Offscreen document** (`offscreen/preview-maker.ts`): a page picture is fetched without cookies
+  (at most 8 MB; its URL is the page's choice), its size read from the header (PNG, GIF, JPEG,
+  WebP: more than 40 megapixels is refused before decoding, another format only up to 1 MB),
+  decoded with `createImageBitmap` (the Content-Type is not trusted) and shrunk on an
+  `OffscreenCanvas` to a 104 × 104 WebP (JPEG if WebP cannot be encoded). A file frame: a hidden,
+  muted `<video preload="metadata">`, seek to `min(10%, 60 s)`, wait for a picture, draw; removing
+  `src` stops the download. A segment frame: the manifest parsed with the download adapters, the
+  lowest video quality this Chrome decodes (`MediaSource.isTypeSupported` on its codecs), its segments (no alternative audio), the init segment and the segment
+  holding the frame time (`core/preview/frame-segments.ts`); fMP4 only (MPEG-TS, WebM segments and
+  SAMPLE-AES give up; a segment whose bytes look like MPEG-TS too); AES-128 decrypted by the
+  download `SegmentFetcher`; the MSE type names one codec per sample entry of the init segment
+  (`encv` / `enca` = CENC: none), the manifest's codec string when it is of that family, else a
+  default (Chrome accepts a wrong H.264 profile). Timeouts: 5 s for a picture, 8 s for a frame; the
+  service worker gives up 2 s later if no answer comes.
+- **Header rules**: the rule's resource types are `xmlhttprequest` and `media` (the hidden video).
+  A preview has its own leases, named by its preview id (`preview/acquireContext`,
+  `preview/releaseContext`); waiting more than 2 s behind another context's rule on the same host
+  ends the attempt as a timeout. The service worker releases any lease of a finished attempt the
+  maker did not release.
+- **Offscreen lifetime**: a preview holds the document for its whole run, not each attempt
+  (`holdOffscreenDocument`); `closeOffscreenDocument` does nothing while it is held (checked
+  again after it looks for the document), and the last release, when a preview created or used
+  the document, runs the download pump, which closes it if no download or merge needs it. A
+  preview creates the document only after the coordinator's startup checks: the coordinator reads
+  "the document exists" as "the engine survived the service worker's restart". The document's
+  `justification` mentions previews.
+- **End-to-end** (Phase 3b, `tests/fixtures/preview-routes.ts`, the fixture site's `/previews/*`):
+  one page per source, each with its own stream, in Chrome for Testing 157 and 116. Each preview
+  comes from the expected source (poster, player frame of an MSE player, file frame of a file from
+  another site whose canvas is locked, segment frame of HLS fMP4 and DASH, page picture of a
+  `VideoObject` and of a video page's `og:image`), is at most 104 × 104 and 32 KB and is not a
+  blank frame; HLS MPEG-TS and an article's `og:image` give the icon (a cached failure). Page
+  pictures and the hidden video's requests carry the page's Referer (the fixtures answer 403
+  without it); a second ask is answered from the cache; the real popup (Chrome 127+) shows the
+  picture in the Detected tile. Chrome 116 has no H.264: its pages play WebM, and fMP4 streams get
+  the icon. No maker needed a fix.
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

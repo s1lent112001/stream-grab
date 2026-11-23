@@ -16,6 +16,42 @@ import { OFFSCREEN_DOCUMENT_PATH } from '@/shared/constants';
 
 let creating: Promise<void> | undefined;
 
+/** Previews being made (1.2.0): the document is not closed under them. */
+let holds = 0;
+/** A preview needed the document while held: when the last hold ends, an idle document may be closed. */
+let usedByPreviews = false;
+let onReleased: (() => void) | undefined;
+
+/** Called when the last hold ends after a preview used the document: the download pump closes it if idle. */
+export function onOffscreenReleased(listener: () => void): void {
+  onReleased = listener;
+}
+
+/**
+ * Keeps the document open (once a preview creates it) until the returned function is called. Held
+ * for a whole preview, not each attempt, so the document is not closed and created again between
+ * a poster and a made frame.
+ */
+export function holdOffscreenDocument(): () => void {
+  holds += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holds -= 1;
+    if (holds === 0 && usedByPreviews) {
+      usedByPreviews = false;
+      onReleased?.();
+    }
+  };
+}
+
+/** Creates the document for a preview made under a hold. */
+export async function ensureOffscreenDocumentForPreview(): Promise<void> {
+  usedByPreviews = true;
+  await ensureOffscreenDocument();
+}
+
 export async function hasOffscreenDocument(): Promise<boolean> {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -31,7 +67,8 @@ export async function ensureOffscreenDocument(): Promise<void> {
     .createDocument({
       url: OFFSCREEN_DOCUMENT_PATH,
       reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.BLOBS],
-      justification: 'Downloads stream segments and merges them with FFmpeg.wasm in a Web Worker, then saves the result.',
+      justification:
+        'Downloads stream segments and merges them with FFmpeg.wasm in a Web Worker, then saves the result; draws small video previews.',
     })
     .finally(() => {
       creating = undefined;
@@ -39,7 +76,9 @@ export async function ensureOffscreenDocument(): Promise<void> {
   await creating;
 }
 
-/** Closes the offscreen document when no work is left, freeing its memory. */
+/** Closes the offscreen document when no work is left, freeing its memory (not while previews use it). */
 export async function closeOffscreenDocument(): Promise<void> {
-  if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
+  if (holds > 0) return;
+  // Checked again after the await: a preview may have taken a hold meanwhile.
+  if ((await hasOffscreenDocument()) && holds === 0) await chrome.offscreen.closeDocument();
 }

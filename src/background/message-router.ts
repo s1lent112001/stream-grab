@@ -7,6 +7,7 @@ import { parseDomSources } from '@/shared/types/page-metadata';
 import { StreamGrabError } from '@/shared/utils/errors';
 import { isRecord } from '@/shared/utils/guards';
 import type { DetectionService } from './detection-service';
+import type { PreviewHost } from './preview-host';
 
 export interface BackgroundContext {
   /** Epoch ms when this service-worker instance started. */
@@ -14,6 +15,7 @@ export interface BackgroundContext {
   detection: DetectionService;
   tasks: TaskService;
   downloads: DownloadCoordinator;
+  previews: PreviewHost;
 }
 
 /** True for messages from extension pages (popup, offscreen document), false for content scripts. */
@@ -161,6 +163,17 @@ export function registerMessageRouter(context: BackgroundContext): void {
       'engine/freshSource': (payload, sender) => {
         requireEngine(sender);
         return downloads.freshSource(stringField(payload, 'taskId', 64));
+      },
+
+      'preview/acquireContext': async (payload, sender) => {
+        requireEngine(sender);
+        return { leaseId: await context.previews.acquireContext(stringField(payload, 'previewId', 64), stringField(payload, 'url')) };
+      },
+
+      'preview/releaseContext': async (payload, sender) => {
+        requireEngine(sender);
+        await context.previews.releaseContext(stringField(payload, 'leaseId', 64));
+        return undefined;
       },
     }),
   );

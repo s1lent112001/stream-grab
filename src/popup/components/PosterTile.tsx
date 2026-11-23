@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import { usePreview, type PreviewTarget } from '../previews';
 import { Icon } from './Icon';
 
 /** Luồng không có ảnh thu nhỏ, nên mỗi dòng có một ô 52 px mang một trong 8 màu, chọn theo tên host. */
@@ -36,18 +38,36 @@ interface PosterTileProps {
   state?: PosterState;
   /** Thời lượng đã định dạng (vd. "12:04"), hiện ở góc dưới bên phải. */
   duration?: string | undefined;
+  /** The stream whose preview picture (1.2.0) fills the tile once it is visible; the colour and icon stay until then. */
+  preview?: PreviewTarget | undefined;
 }
 
 /** Ô "poster" của một dòng. Chỉ để trình bày (`aria-hidden`): trạng thái luôn có chữ ở dòng đó. */
-export function PosterTile({ host, state = 'play', duration }: PosterTileProps) {
+export function PosterTile({ host, state = 'play', duration, preview }: PosterTileProps) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const picture = usePreview(preview, ref);
   const surface =
     state === 'locked' ? 'bg-surface text-faint' : state === 'failed' ? 'bg-danger text-on-danger' : `${POSTER_COLORS[posterIndex(host)]} text-on-poster`;
+  // With a picture: no play triangle (the picture says it is a video); a lock or warning sits on a scrim over it.
+  const icon = picture === null || state === 'locked' || state === 'failed';
   return (
-    <span aria-hidden data-poster={state} className={`relative grid size-[52px] shrink-0 place-items-center rounded-tile ${surface}`}>
-      <Icon
-        name={state === 'locked' ? 'lock' : state === 'failed' ? 'warning' : 'play'}
-        className={state === 'play' || state === 'done' ? 'size-[18px]' : 'size-5'}
-      />
+    <span
+      ref={ref}
+      aria-hidden
+      data-poster={state}
+      data-preview={picture === null ? undefined : 'ready'}
+      className={`relative grid size-[52px] shrink-0 place-items-center rounded-tile ${surface}`}
+    >
+      {picture !== null && (
+        <img src={picture} alt="" draggable={false} className="absolute inset-0 size-full rounded-tile object-cover" />
+      )}
+      {picture !== null && icon && <span className="absolute inset-0 rounded-tile bg-scrim" />}
+      {icon && (
+        <Icon
+          name={state === 'locked' ? 'lock' : state === 'failed' ? 'warning' : 'play'}
+          className={`relative ${state === 'play' || state === 'done' ? 'size-[18px]' : 'size-5'} ${picture !== null ? 'text-on-poster' : ''}`}
+        />
+      )}
       {duration && state !== 'locked' && state !== 'failed' && (
         <span className="absolute right-[3px] bottom-[3px] rounded-[5px] bg-scrim px-1 text-[10px] leading-[14px] font-bold text-on-poster tabular-nums">
           {duration}

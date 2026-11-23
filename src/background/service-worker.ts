@@ -17,6 +17,11 @@ import { TaskService } from '@/core/download/task-service';
 import { TaskStore } from '@/core/download/task-store';
 import { OpfsOutputFiles } from '@/core/media/output-files';
 import { PARTIAL_DIRECTORY } from '@/core/download/partial-files';
+import { listedStreams } from '@/core/detection/junk-filter';
+import { IndexedDbPreviewCache } from '@/core/preview/preview-cache';
+import { sendToContent, sendToOffscreen } from '@/shared/messaging/client';
+import { parseFrameMetadata } from '@/shared/types/page-metadata';
+import { createLimiter } from '@/shared/utils/concurrency';
 import { getSettingsStore } from '@/shared/settings/settings-store';
 import { errorMessage } from '@/shared/utils/errors';
 import { createLogger } from '@/shared/utils/logger';
@@ -25,6 +30,8 @@ import { offscreenEngine } from './engine-channel';
 import { chromeFileSaver } from './file-saver';
 import { registerMessageRouter } from './message-router';
 import { chromeNotifier, taskIdOfNotification } from './notifier';
+import { ensureOffscreenDocumentForPreview, holdOffscreenDocument, onOffscreenReleased } from './offscreen-host';
+import { PreviewHost } from './preview-host';
 
 const log = createLogger('background');
 const startedAt = Date.now();
@@ -65,7 +72,63 @@ const downloads = new DownloadCoordinator({
   notifier: chromeNotifier,
   logger: log,
 });
-registerMessageRouter({ startedAt, detection, tasks, downloads });
+
+/** Longest the service worker waits for a frame's content script while making a preview (ms). */
+const CONTENT_TIMEOUT_MS = 2000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('The page did not answer'));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+// Previews (1.2.0): asked by the open popup over a port, made by the content script or the offscreen document.
+const previews = new PreviewHost({
+  cache: new IndexedDbPreviewCache(),
+  limit: createLimiter(2),
+  findStream: async (streamId, tabId) =>
+    (tabId === undefined ? undefined : await getStream(tabId, streamId).catch(() => undefined)) ?? (await findStreams(streamId))[0],
+  frameMetadata: async (tabId, frameId) => {
+    try {
+      return parseFrameMetadata(await withTimeout(sendToContent(tabId, frameId, 'content/getMetadata'), CONTENT_TIMEOUT_MS));
+    } catch {
+      return null;
+    }
+  },
+  videosOnPage: async (tabId) =>
+    listedStreams(await detection.manager.getStreams(tabId), (await getSettingsStore().load()).hideJunk).length,
+  // A page stuck in a loop (or paused in DevTools) never answers: it must not hold a preview slot.
+  playerFrame: (tabId, frameId, request) => withTimeout(sendToContent(tabId, frameId, 'content/getPlayerFrame', request), CONTENT_TIMEOUT_MS),
+  acquireContext: (url, context) => detection.rules.acquire(url, context),
+  holdOffscreen: holdOffscreenDocument,
+  ensureOffscreen: async () => {
+    // A document created before the coordinator's startup checks would read as "the engine survived".
+    await startup;
+    await ensureOffscreenDocumentForPreview();
+  },
+  sendMake: (previewId, job) => sendToOffscreen('preview/make', { previewId, job }),
+  sendCancel: async (previewIds) => {
+    await sendToOffscreen('preview/cancel', { previewIds });
+  },
+  keptStreamIds: async () => new Set((await taskStore.list()).map((task) => task.source.streamId)),
+  extensionOrigin: chrome.runtime.getURL(''),
+  now: () => Date.now(),
+  logger: log,
+});
+chrome.runtime.onConnect.addListener((port) => {
+  previews.connect(port);
+});
+// The last preview let the offscreen document go: close it if no download or merge needs it.
+onOffscreenReleased(() => {
+  void downloads.pump();
+});
+
+registerMessageRouter({ startedAt, detection, tasks, downloads, previews });
 
 // Chrome finished (or gave up) saving a merged file: complete the task. Also wakes a suspended worker.
 chrome.downloads.onChanged.addListener((delta) => {
@@ -98,7 +161,7 @@ getSettingsStore().subscribe(() => {
 
 // Resume: tasks that were downloading when the worker (or the browser) stopped are handed to the engine
 // again and continue from their stored segments; data no task needs any more is deleted.
-downloads.onStartup().catch((error: unknown) => {
+const startup = downloads.onStartup().catch((error: unknown) => {
   log.error('Could not resume downloads', { error: errorMessage(error) });
 });
 

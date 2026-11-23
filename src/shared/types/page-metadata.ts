@@ -1,6 +1,6 @@
 import { PROGRESSIVE_CONTAINERS, type MediaProtocol, type ProgressiveContainer } from '@/core/models/detected-stream';
 import { isOneOf, isRecord } from '@/shared/utils/guards';
-import { parseHttpUrl } from '@/shared/utils/url';
+import { parseHttpUrl, resolveHttpUrl } from '@/shared/utils/url';
 
 /**
  * Data reported by the content script. It is read from page-controlled DOM in a
@@ -14,6 +14,21 @@ export interface VideoElementInfo {
   duration?: number;
   width?: number;
   height?: number;
+  /** http(s) URL the element plays (currentSrc, else its src attribute); absent for blob: (MSE players) and data:. */
+  src?: string;
+  /** http(s) URLs of its `<source>` children. */
+  sources?: string[];
+  /** http(s) URL of its `poster` (1.2.0). */
+  poster?: string;
+  /** It shows a decoded picture now (readyState ≥ HAVE_CURRENT_DATA): the content script can draw it (1.2.0). */
+  hasPicture?: boolean;
+}
+
+/** A schema.org VideoObject in the frame's JSON-LD (1.2.0). */
+export interface VideoObjectInfo {
+  name?: string;
+  /** First http(s) `thumbnailUrl`. */
+  thumbnailUrl?: string;
 }
 
 export interface FrameMetadata {
@@ -25,6 +40,12 @@ export interface FrameMetadata {
   /** name of a schema.org VideoObject in JSON-LD */
   structuredTitle?: string;
   videos: VideoElementInfo[];
+  /** Every VideoObject of the JSON-LD, in document order (1.2.0). */
+  videoObjects?: VideoObjectInfo[];
+  /** og:type, lower case (1.2.0). */
+  ogType?: string;
+  /** og:image, http(s) (1.2.0). */
+  ogImage?: string;
 }
 
 /** A manifest or progressive file (MP4/WebM) URL referenced directly by a <video> or <source> element. */
@@ -47,13 +68,52 @@ export interface DomSubtitle {
   isDefault: boolean;
 }
 
+/** Asks a frame's content script to draw what one of its `<video>` elements shows (1.2.0). */
+export interface PlayerFrameRequest {
+  /** Position among the frame's `<video>` elements, as `content/getMetadata` listed them. */
+  index: number;
+  /** The http(s) URL that element played then: the element is looked up by it if the page moved it. */
+  src?: string;
+}
+
+/**
+ * - `not-found`:  no such `<video>` any more
+ * - `no-picture`: it has no decoded frame now (not loaded, `preload="none"`)
+ * - `locked`:     the canvas may not be read (a file from another site without CORS, DRM)
+ */
+export const PLAYER_FRAME_FAILURES = ['not-found', 'no-picture', 'locked'] as const;
+export type PlayerFrameFailure = (typeof PLAYER_FRAME_FAILURES)[number];
+
+/** A WebP / JPEG data URL (checked by the service worker), or why there is none. */
+export type PlayerFrameResult = { dataUrl: string } | { failure: PlayerFrameFailure };
+
 export const METADATA_LIMITS = {
   maxTextLength: 300,
   maxVideos: 50,
   maxSources: 50,
   maxSubtitles: 20,
   maxUrlLength: 4096,
+  /** `<source>` children read per <video>. */
+  maxVideoSources: 5,
+  /** VideoObjects read per frame. */
+  maxVideoObjects: 10,
+  /** Picture URLs (poster, thumbnailUrl, og:image): longer ones are ignored. */
+  maxPictureUrlLength: 2048,
+  maxOgTypeLength: 50,
 } as const;
+
+/**
+ * An http(s) URL of at most `maxLength` characters, resolved against `base`; anything else (data:,
+ * blob:) is dropped, and so are empty and fragment-only references (`poster=""`, `#`), which would
+ * resolve to the page itself.
+ */
+export function boundedHttpUrl(value: unknown, maxLength: number, base?: string): string | undefined {
+  if (typeof value !== 'string' || value.length > maxLength) return undefined;
+  const reference = value.trim();
+  if (reference.startsWith('#')) return undefined;
+  const href = base === undefined ? parseHttpUrl(reference)?.href : resolveHttpUrl(reference, base);
+  return href !== undefined && href !== null && href.length <= maxLength ? href : undefined;
+}
 
 /** Trims, collapses whitespace, strips control characters, caps length; undefined when empty. */
 export function cleanText(value: unknown, maxLength: number = METADATA_LIMITS.maxTextLength): string | undefined {
@@ -79,7 +139,29 @@ function parseVideoInfo(raw: unknown): VideoElementInfo | null {
   if (duration !== undefined) info.duration = duration;
   if (width !== undefined) info.width = Math.round(width);
   if (height !== undefined) info.height = Math.round(height);
+  const src = boundedHttpUrl(raw['src'], METADATA_LIMITS.maxUrlLength);
+  if (src !== undefined) info.src = src;
+  if (Array.isArray(raw['sources'])) {
+    const sources = raw['sources']
+      .slice(0, METADATA_LIMITS.maxVideoSources)
+      .map((source) => boundedHttpUrl(source, METADATA_LIMITS.maxUrlLength))
+      .filter((source) => source !== undefined);
+    if (sources.length > 0) info.sources = sources;
+  }
+  const poster = boundedHttpUrl(raw['poster'], METADATA_LIMITS.maxPictureUrlLength);
+  if (poster !== undefined) info.poster = poster;
+  if (raw['hasPicture'] === true) info.hasPicture = true;
   return info;
+}
+
+function parseVideoObject(raw: unknown): VideoObjectInfo | null {
+  if (!isRecord(raw)) return null;
+  const object: VideoObjectInfo = {};
+  const name = cleanText(raw['name']);
+  const thumbnailUrl = boundedHttpUrl(raw['thumbnailUrl'], METADATA_LIMITS.maxPictureUrlLength);
+  if (name !== undefined) object.name = name;
+  if (thumbnailUrl !== undefined) object.thumbnailUrl = thumbnailUrl;
+  return object;
 }
 
 export function parseFrameMetadata(raw: unknown): FrameMetadata | null {
@@ -99,6 +181,17 @@ export function parseFrameMetadata(raw: unknown): FrameMetadata | null {
   if (documentTitle !== undefined) metadata.documentTitle = documentTitle;
   if (socialTitle !== undefined) metadata.socialTitle = socialTitle;
   if (structuredTitle !== undefined) metadata.structuredTitle = structuredTitle;
+  if (Array.isArray(raw['videoObjects'])) {
+    const objects = raw['videoObjects']
+      .slice(0, METADATA_LIMITS.maxVideoObjects)
+      .map(parseVideoObject)
+      .filter((object) => object !== null);
+    if (objects.length > 0) metadata.videoObjects = objects;
+  }
+  const ogType = cleanText(raw['ogType'], METADATA_LIMITS.maxOgTypeLength)?.toLowerCase();
+  const ogImage = boundedHttpUrl(raw['ogImage'], METADATA_LIMITS.maxPictureUrlLength);
+  if (ogType !== undefined) metadata.ogType = ogType;
+  if (ogImage !== undefined) metadata.ogImage = ogImage;
   return metadata;
 }
 

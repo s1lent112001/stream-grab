@@ -25,7 +25,7 @@ function CompletedRow({ task, exists, onRemove }: { task: DownloadTask; exists: 
   return (
     <li className="flex gap-2.5 px-4 pt-2.5 pb-3">
       {/* File đã mất thì không có dấu tích "đã lưu"; chip "File missing" nói rõ. */}
-      <PosterTile host={host} state={missing ? 'play' : 'done'} />
+      <PosterTile host={host} state={missing ? 'play' : 'done'} preview={{ streamId: task.source.streamId, tabId: task.source.tabId }} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-title text-ink" title={`${task.source.title}\n${saved?.path ?? fileName}`}>
           {task.source.title}

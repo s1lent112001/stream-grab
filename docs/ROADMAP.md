@@ -260,7 +260,8 @@ Phases (one session each, checks and e2e at the end of each):
    line for "Show hidden". **Done 2026-11-23** (GitHub only; no store upload until v1.5.0).
 
 **v1.2.0: video previews.** A picture for each detected video instead of the static icon. Previews
-are made lazily (popup open, row visible) and cached; none for DRM. No new permission and no new
+are made lazily (popup open, row visible) and cached; a DRM stream gets only a picture the page
+gives (poster, declared picture), never a frame. No new permission and no new
 install warning: everything uses the content script, host permissions, the offscreen document and
 the header rules StreamGrab already has.
 
@@ -278,13 +279,15 @@ Decided 2026-11-23 (the "middle" option: no FFmpeg for previews, chosen for perf
   5. the static icon.
 
   Steps 1 and 2 count only when the `<video>` is known to play this stream: it points at it
-  (`src`), or it is the frame's only `<video>` (the rule `durationHint` already uses).
+  (`src` or a `<source>`), or it is the frame's only `<video>` and has no http(s) source of its own
+  (an MSE player; stricter than `durationHint`, so a pre-roll ad's file is not taken for the video).
 - **No FFmpeg for previews.** HLS with MPEG-TS segments (Chrome's MSE cannot read them) gets steps
   1, 2 and 4 only. A TS frame through FFmpeg would load a second 32 MB core next to a merge (memory,
   CPU, seconds of waiting); it moves to Later, done only if many rows keep the icon.
 - **No plain `og:image`**: it usually pictures the page (article cover, logo), not the video. Step 4
   uses only a picture the page gives for the video itself: `thumbnailUrl` of a schema.org
-  `VideoObject` (when the page has one `VideoObject`, or its name matches the video's title), else
+  `VideoObject` (when the page has one `VideoObject`, or its name matches the `<video>` element's
+  own title: not the stream's title, which is often the first `VideoObject`'s name), else
   `og:image` when `og:type` is `video.*` and the page has exactly one video.
 - **Frame at about 10% of the length** (at most about 60 s in), not the first frame, which is often
   black or an intro. HLS / DASH: one segment of the **lowest** quality (little data); AES-128 HLS
@@ -322,13 +325,21 @@ Phases (one session each, checks and e2e at the end of each):
    MSE needs a codecs string naming every track in the segment.
 2. Core: the source-order rules (pure); the content script reading `poster`, `VideoObject`
    `thumbnailUrl`, `og:type` and `og:image` and drawing the player's frame (all parsed and bounded
-   in the service worker); the preview cache with failures; unit tests.
+   in the service worker); the preview cache with failures; unit tests. **Done 2026-11-23**
+   (ARCHITECTURE.md "Preview core"). For Phase 3: a cached failure lists the kinds of source it
+   tried and is tried again when a new kind is offered, so a cancelled attempt (popup closed) or a
+   lease timeout must not be cached as a failure; `segment-frame` is offered from the light
+   manifest summary (an HLS master often says `none` while its media playlists use SAMPLE-AES),
+   so the maker checks the encryption of the rendition it picks again.
 3. Preview makers in the offscreen document (page pictures, a file frame, an fMP4 segment frame,
    the preview lease, timeouts, cancelling) and the popup (previews asked when a row becomes
    visible, the tile showing the picture in Detected, Queue and Completed); e2e fixtures (poster,
    a playing MSE player, MP4, HLS fMP4, DASH, HLS TS without a picture, `VideoObject`, a video
    page's `og:image`, an article's `og:image` that is not used). Split into two sessions if it
-   grows past about 80 tool calls.
+   grows past about 80 tool calls. **3a done 2026-11-23** (makers, service worker, popup tiles,
+   unit tests; ARCHITECTURE.md "Preview makers and the popup"). **3b done 2026-11-23**: the e2e
+   fixtures above (`/previews/*`) pass in Chrome for Testing 157 and 116 (WebM there; fMP4 gets
+   the icon without H.264); every source made its picture in a real browser, no maker needed a fix.
 4. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
    draft line (GitHub only; no store upload until v1.5.0).
 

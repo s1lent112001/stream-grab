@@ -6,6 +6,7 @@ import { createDownloadRouter, DEMO_MEDIA } from '@tests/fixtures/download-route
 import { createFixtureRouter } from '@tests/fixtures/fixture-routes';
 import { syntheticFiles } from '@tests/fixtures/media/synthetic-files';
 import { syntheticMedia } from '@tests/fixtures/media/synthetic-media';
+import { createPreviewRouter } from '@tests/fixtures/preview-routes';
 import { createProgressiveRouter } from '@tests/fixtures/progressive-routes';
 import { sendResponse } from '@tests/fixtures/send-response';
 
@@ -21,10 +22,11 @@ export interface FixtureSite {
 
 /**
  * The fixture site of `npm run fixtures` (detection page, download demo with
- * real synthetic media), on a free port of 127.0.0.1.
+ * real synthetic media, progressive files, preview pages), on a free port of 127.0.0.1.
  */
 export async function startFixtureSite(options: { latencyMs: number }): Promise<FixtureSite> {
   const media = await syntheticMedia(DEMO_MEDIA);
+  const files = await syntheticFiles();
   const route = createFixtureRouter(
     {
       manifest: (path) => readFileSync(resolve(fixtures, 'fixtures/manifests', path), 'utf8'),
@@ -32,7 +34,8 @@ export async function startFixtureSite(options: { latencyMs: number }): Promise<
       downloadPage: () => readFileSync(resolve(fixtures, 'manual/download-page.html'), 'utf8'),
     },
     createDownloadRouter(media, { latencyMs: options.latencyMs }),
-    createProgressiveRouter(await syntheticFiles()),
+    createProgressiveRouter(files),
+    createPreviewRouter(media, files),
   );
   const requests: FixtureSite['requests'] = [];
   const server = createServer((req, res) => {

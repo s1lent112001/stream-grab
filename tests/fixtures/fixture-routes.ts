@@ -92,11 +92,13 @@ const DASH = 'application/dash+xml';
 /**
  * `downloads`: the download demo's routes (createDownloadRouter); without it /download/* answers 404.
  * `progressive`: the progressive files page and files (createProgressiveRouter); without it /files* answers 404.
+ * `previews`: the preview pages (createPreviewRouter, 1.2.0); without it /previews* answers 404.
  */
 export function createFixtureRouter(
   files: FixtureFiles,
   downloads: (pathname: string, request?: DemoRequest) => FixtureResponse | undefined = () => undefined,
   progressive: (pathname: string, request?: DemoRequest) => FixtureResponse | undefined = () => undefined,
+  previews: (pathname: string, request?: DemoRequest) => FixtureResponse | undefined = () => undefined,
 ): (pathname: string, request?: DemoRequest) => FixtureResponse {
   const ok = (contentType: string, body: string | Uint8Array<ArrayBuffer>): FixtureResponse => ({ status: 200, contentType, body });
   const notFound: FixtureResponse = { status: 404, contentType: 'text/plain', body: 'not found' };
@@ -106,6 +108,7 @@ export function createFixtureRouter(
     if (pathname === '/download/streams.json') return ok('application/json', JSON.stringify(DOWNLOAD_STREAMS));
     if (pathname.startsWith('/download/')) return downloads(pathname, request) ?? notFound;
     if (pathname === '/files' || pathname.startsWith('/files/')) return progressive(pathname, request) ?? notFound;
+    if (pathname === '/previews' || pathname.startsWith('/previews/')) return previews(pathname, request) ?? notFound;
     if (pathname === '/requests.json') return ok('application/json', JSON.stringify(PAGE_REQUESTS));
     if (pathname === '/embed/dash') return ok('text/html; charset=utf-8', EMBED_PAGE);
     if (pathname === LIVE_PAGE_PATH) return ok('text/html; charset=utf-8', LIVE_PAGE);

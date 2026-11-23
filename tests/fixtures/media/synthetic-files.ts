@@ -6,7 +6,9 @@
  * - MP4 as FFmpeg writes it (index `moov` after the media data `mdat`),
  * - MP4 with `+faststart` (index first, as streaming sites prefer),
  * - fragmented MP4 (`ftyp` + empty `moov` + `moof`/`mdat` pairs): still one whole file,
- * - WebM (VP8 + Opus).
+ * - WebM (VP8 + Opus);
+ *
+ * and one still picture (JPEG) for previews (1.2.0).
  *
  * Nothing is written to disk; generated once per process (~0.5 s).
  * Plain relative imports only, like synthetic-media.ts.
@@ -18,6 +20,8 @@ export interface SyntheticFiles {
   mp4FastStart: Uint8Array<ArrayBuffer>;
   mp4Fragmented: Uint8Array<ArrayBuffer>;
   webm: Uint8Array<ArrayBuffer>;
+  /** A still of the test pattern (JPEG, 320 × 180): a poster or a picture a page declares (1.2.0). */
+  picture: Uint8Array<ArrayBuffer>;
 }
 
 let cache: Promise<SyntheticFiles> | undefined;
@@ -56,5 +60,12 @@ async function generate(): Promise<SyntheticFiles> {
   run('-i', '/clip.mp4', '-c', 'copy', '-movflags', '+faststart', '/fast.mp4');
   run('-i', '/clip.mp4', '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '/frag.mp4');
   run(...source, ...['-c:v', 'libvpx', '-b:v', '100k', '-c:a', 'libopus', '-b:a', '32k', '-shortest', '/clip.webm']);
-  return { mp4: read('/clip.mp4'), mp4FastStart: read('/fast.mp4'), mp4Fragmented: read('/frag.mp4'), webm: read('/clip.webm') };
+  run(...['-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=1'], ...['-frames:v', '1', '-q:v', '5', '/picture.jpg']);
+  return {
+    mp4: read('/clip.mp4'),
+    mp4FastStart: read('/fast.mp4'),
+    mp4Fragmented: read('/frag.mp4'),
+    webm: read('/clip.webm'),
+    picture: read('/picture.jpg'),
+  };
 }

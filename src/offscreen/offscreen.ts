@@ -1,5 +1,6 @@
 /**
- * Offscreen document: host of the engine, downloads and media processing.
+ * Offscreen document: host of the engine, downloads and media processing,
+ * and of the preview maker (1.2.0: a hidden <video> and MSE draw video frames).
  *
  * Only chrome.runtime is available here. It has a DOM, can spawn Web Workers,
  * shares the extension origin's IndexedDB, can create blob: URLs, and is not
@@ -21,13 +22,16 @@ import { ManifestFetcher, type FetchFunction } from '@/core/network/manifest-fet
 import { DashAdapter } from '@/core/protocols/dash/dash-adapter';
 import { HlsAdapter } from '@/core/protocols/hls/hls-adapter';
 import { ProtocolRegistry } from '@/core/protocols/protocol-adapter';
+import { parsePreviewMakeRequest } from '@/core/preview/preview-job';
 import { FFMPEG_CORE_PATH } from '@/shared/constants';
 import { sendToBackground } from '@/shared/messaging/client';
 import { createMessageRouter } from '@/shared/messaging/router';
 import { errorMessage } from '@/shared/utils/errors';
+import { isRecord } from '@/shared/utils/guards';
 import { createLogger } from '@/shared/utils/logger';
 import { ContextLeases } from './context-leases';
 import { Engine } from './engine';
+import { PreviewMaker } from './preview-maker';
 
 const log = createLogger('offscreen');
 
@@ -108,6 +112,21 @@ const media = new MediaManager({
 
 const engine = new Engine(downloads, media);
 
+// Preview pictures (1.2.0): their own header-rule leases, named by preview id, short and never shared with tasks.
+const previews = new PreviewMaker({
+  leases: new ContextLeases(
+    async (previewId, url) => (await sendToBackground('preview/acquireContext', { previewId, url })).leaseId,
+    async (leaseId) => {
+      await sendToBackground('preview/releaseContext', { leaseId });
+    },
+  ),
+  protocols: (fetch) => {
+    const fetcher = new ManifestFetcher({ fetch });
+    return new ProtocolRegistry().register(new HlsAdapter({ fetcher })).register(new DashAdapter({ fetcher }));
+  },
+  logger: createLogger('preview'),
+});
+
 chrome.runtime.onMessage.addListener(
   createMessageRouter('offscreen', {
     'offscreen/ping': () => ({ ready: true as const }),
@@ -119,6 +138,15 @@ chrome.runtime.onMessage.addListener(
     },
     'engine/reacquireContexts': async () => {
       await leases.reacquireAll();
+      return undefined;
+    },
+    'preview/make': async (payload) => {
+      const request = parsePreviewMakeRequest(payload);
+      return request ? previews.make(request) : { failure: 'failed' as const };
+    },
+    'preview/cancel': (payload) => {
+      const ids = isRecord(payload) && Array.isArray(payload['previewIds']) ? payload['previewIds'] : [];
+      previews.cancel(ids.filter((id): id is string => typeof id === 'string'));
       return undefined;
     },
   }),

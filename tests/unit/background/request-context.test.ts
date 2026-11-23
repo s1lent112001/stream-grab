@@ -77,7 +77,7 @@ describe('RequestContextRules', () => {
           requestDomains: ['cdn.example.com'],
           initiatorDomains: [EXTENSION_ID],
           tabIds: [-1],
-          resourceTypes: ['xmlhttprequest'],
+          resourceTypes: ['xmlhttprequest', 'media'],
         },
       },
     ]);

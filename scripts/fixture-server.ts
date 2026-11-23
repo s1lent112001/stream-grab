@@ -18,6 +18,7 @@ import { createDownloadRouter, DEMO_MEDIA } from '../tests/fixtures/download-rou
 import { createFixtureRouter } from '../tests/fixtures/fixture-routes.ts';
 import { syntheticFiles } from '../tests/fixtures/media/synthetic-files.ts';
 import { syntheticMedia } from '../tests/fixtures/media/synthetic-media.ts';
+import { createPreviewRouter } from '../tests/fixtures/preview-routes.ts';
 import { createProgressiveRouter } from '../tests/fixtures/progressive-routes.ts';
 import { sendResponse } from '../tests/fixtures/send-response.ts';
 
@@ -35,6 +36,7 @@ const route = createFixtureRouter(
   },
   createDownloadRouter(media),
   createProgressiveRouter(files),
+  createPreviewRouter(media, files),
 );
 
 /** Successful segment downloads of the demo would flood the log; manifests and errors are shown. */
@@ -58,6 +60,6 @@ createServer((req, res) => {
 }).listen(port, '127.0.0.1', () => {
   console.log(
     `StreamGrab fixtures on http://localhost:${port}/ (download demo: http://localhost:${port}/download, ` +
-      `progressive MP4/WebM files: http://localhost:${port}/files)`,
+      `progressive MP4/WebM files: http://localhost:${port}/files, previews: http://localhost:${port}/previews)`,
   );
 });

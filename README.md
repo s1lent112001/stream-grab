@@ -127,6 +127,11 @@ Serves a test site bound to 127.0.0.1, with these pages:
   Referer (downloaded through the extension's fallback), and an MP4 behind a redirect; the page
   also fetches an `.mp4` by script, which must not be listed. <http://localhost:5180/files/slow>
   serves a 6 MiB file at 1 MiB/s, to cancel, retry or close Chrome during the download.
+- <http://localhost:5180/previews>: **preview pictures** (1.2.0). One page per source of a
+  row's picture: a poster, a playing MSE player, a playing file from the other local host
+  (127.0.0.1 ↔ localhost, so the page cannot read its frame), HLS fMP4 and DASH (a frame from one
+  segment), HLS MPEG-TS (the icon), a `VideoObject` `thumbnailUrl`, a video page's `og:image`, and
+  an article's `og:image` (not used: the icon). Open the popup on each to see its tile.
 - <http://localhost:5180/live>: **a live channel next to a replay** (0.4.0). The page requests a
   VOD once and a live playlist 30 times with a changing LL-HLS query; only the VOD is listed and
   the badge stays at 1.

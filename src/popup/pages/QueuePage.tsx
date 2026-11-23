@@ -225,7 +225,11 @@ function TaskRow({ task, now, onAction }: { task: DownloadTask; now: number; onA
 
   return (
     <li className="flex gap-2.5 px-4 pt-2.5 pb-3">
-      <PosterTile host={host} state={phase === 'failed' ? 'failed' : phase === 'completed' ? 'done' : 'play'} />
+      <PosterTile
+        host={host}
+        state={phase === 'failed' ? 'failed' : phase === 'completed' ? 'done' : 'play'}
+        preview={{ streamId: task.source.streamId, tabId: task.source.tabId }}
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-title text-ink" title={tooltip}>
           {task.source.title}

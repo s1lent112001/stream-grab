@@ -45,6 +45,8 @@ const engineStubs = {
   'engine/sync': () => ({ running: [] }),
   'engine/cancel': () => undefined,
   'engine/reacquireContexts': () => undefined,
+  'preview/make': () => ({ failure: 'failed' as const }),
+  'preview/cancel': () => undefined,
 } satisfies Omit<HandlerMap<OffscreenContract>, 'offscreen/ping'>;
 
 const pingHandlers: HandlerMap<OffscreenContract> = {

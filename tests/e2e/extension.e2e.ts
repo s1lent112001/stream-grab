@@ -12,11 +12,13 @@ import { probeJob, parseProbeOutput } from '@/core/media/probe';
 import type { DetectedStream } from '@/core/models/detected-stream';
 import type { DownloadTask } from '@/core/models/download-task';
 import { STORAGE_KEYS } from '@/shared/constants';
+import { PREVIEW_PORT } from '@/shared/messaging/protocol';
 import { formatBytes } from '@/shared/utils/bytes';
 import { NodeFfmpegRunner } from '@tests/fakes/ffmpeg-node';
 import { DEMO_MEDIA, SIDECAR_CUE_SHIFT_SEC, SIDECAR_SUBTITLE_PATH } from '@tests/fixtures/download-routes';
 import { LIVE_PAGE_PATH, LIVE_PATH, LIVE_RELOADS, LIVE_VOD_PATH } from '@tests/fixtures/fixture-routes';
 import { syntheticFiles } from '@tests/fixtures/media/synthetic-files';
+import { PREVIEW_CASES, previewPicturePath, type PreviewCaseName } from '@tests/fixtures/preview-routes';
 import {
   JUNK_AD_HOST,
   JUNK_AD_PATH,
@@ -171,6 +173,69 @@ async function opfsFiles(page: Page, directory: string): Promise<string[]> {
 
 /** Files in the extension's OPFS merge directory. */
 const mergeFiles = (page: Page): Promise<string[]> => opfsFiles(page, MERGE_DIRECTORY);
+
+/** What the popup's tile does for a stream: asks the service worker over the preview port, then reads the cache. */
+async function askPreview(page: Page, tabId: number, streamId: string) {
+  return page.evaluate(
+    async (portName, tabId, streamId) => {
+      const outcome = await new Promise<string>((resolve) => {
+        const port = chrome.runtime.connect({ name: portName });
+        const timer = setTimeout(() => {
+          resolve('no answer');
+        }, 60_000);
+        port.onMessage.addListener((message: { streamId?: string; outcome?: string }) => {
+          if (message.streamId !== streamId) return;
+          clearTimeout(timer);
+          resolve(message.outcome ?? 'invalid');
+          port.disconnect();
+        });
+        port.postMessage({ streamId, tabId });
+      });
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open('streamgrab-previews');
+        open.onsuccess = () => {
+          resolve(open.result);
+        };
+        open.onerror = () => {
+          reject(new Error(open.error?.message ?? 'open failed'));
+        };
+      });
+      const record = await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+        const get = db.transaction('previews', 'readonly').objectStore('previews').get(streamId);
+        get.onsuccess = () => {
+          resolve(get.result as Record<string, unknown> | undefined);
+        };
+        get.onerror = () => {
+          reject(new Error(get.error?.message ?? 'get failed'));
+        };
+      });
+      db.close();
+      if (record?.['status'] !== 'ready') return { outcome, status: record?.['status'], tried: record?.['tried'] };
+      const bytes = record['bytes'] as ArrayBuffer;
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: String(record['type']) }));
+      // Colours in the picture (4 bits a channel): the test pattern has many, a black or blank frame one or two.
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext('2d');
+      context?.drawImage(bitmap, 0, 0);
+      const pixels = context?.getImageData(0, 0, bitmap.width, bitmap.height).data ?? new Uint8ClampedArray();
+      const colours = new Set<number>();
+      for (let at = 0; at < pixels.length; at += 4) colours.add(((pixels[at]! >> 4) << 8) | ((pixels[at + 1]! >> 4) << 4) | (pixels[at + 2]! >> 4));
+      return {
+        outcome,
+        status: 'ready',
+        source: record['source'],
+        type: record['type'],
+        size: bytes.byteLength,
+        width: bitmap.width,
+        height: bitmap.height,
+        colours: colours.size,
+      };
+    },
+    PREVIEW_PORT,
+    tabId,
+    streamId,
+  );
+}
 
 /** Not on Chrome's HSTS preload list for plain http, so the fixture site can stand in for it. */
 const BLOCKED_HOST = 'www.youtube-nocookie.com';
@@ -937,6 +1002,75 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
 
     await setMode('file');
     await demo.close();
+    await ext.close();
+  });
+
+  it('makes a preview picture from each source a page gives, and the popup tile shows it (1.2.0)', async () => {
+    const ext = await extensionPage();
+    const h264 = await ext.evaluate(() => MediaSource.isTypeSupported('video/mp4; codecs="avc1.640014"'));
+    const imageType: unknown = expect.stringMatching(/^image\/(webp|jpeg)$/);
+    const results: Partial<Record<PreviewCaseName, unknown>> = {};
+    const expected: Partial<Record<PreviewCaseName, unknown>> = {};
+    let posterTab: { page: Page; tabId: number; streamId: string } | undefined;
+    for (const item of PREVIEW_CASES) {
+      const pageUrl = `${site.origin}${item.path}`;
+      const page = await browser.newPage();
+      await page.goto(pageUrl);
+      await page.bringToFront();
+      if (item.name === 'player' || item.name === 'file') {
+        await page.waitForSelector('body[data-playing="true"]', { timeout: 30_000 });
+      }
+      const streamPath = (await page.$eval('body', (body) => body.dataset['stream'])) ?? item.stream;
+      const { tabId, streams } = await detected(ext, pageUrl, [streamPath]);
+      const stream = streams[0];
+      if (!stream) throw new Error(`no stream on ${item.path}`);
+      results[item.name] = await askPreview(ext, tabId, stream.id);
+      // Without H.264 (Chrome 116) no fMP4 segment plays in MSE: the icon.
+      const source = item.expected === 'segment-frame' && !h264 ? null : item.expected;
+      expected[item.name] =
+        source === null
+          ? expect.objectContaining({ outcome: 'none', status: 'failed' })
+          : expect.objectContaining({ outcome: 'ready', status: 'ready', source, type: imageType });
+      if (item.name === 'poster') posterTab = { page, tabId, streamId: stream.id };
+      else await page.close();
+    }
+    expect(results).toEqual(expected);
+    // Small pictures of the video, not black frames.
+    for (const result of Object.values(results) as { status?: string; size?: number; width?: number; height?: number; colours?: number }[]) {
+      if (result.status !== 'ready') continue;
+      expect(result.size).toBeLessThanOrEqual(32 * 1024);
+      expect(Math.max(result.width ?? 0, result.height ?? 0)).toBeLessThanOrEqual(104);
+      expect(result.colours).toBeGreaterThan(8);
+    }
+
+    // Page pictures are fetched with the page as Referer (they answer 403 without it); the article's og:image never is.
+    const pictureRequests = (name: PreviewCaseName) => site.requests.filter((entry) => entry.path === previewPicturePath(name));
+    expect(pictureRequests('poster').some((entry) => entry.referer?.includes('/previews/poster') === true)).toBe(true);
+    expect(pictureRequests('video-object').some((entry) => entry.referer?.includes('/previews/video-object') === true)).toBe(true);
+    expect(pictureRequests('article-og')).toEqual([]);
+    // Every request for the file from another site carried a Referer, the hidden video's range requests included.
+    const fileRequests = site.requests.filter((entry) => entry.path.startsWith('/previews/file/clip.'));
+    expect(fileRequests.length).toBeGreaterThan(0);
+    expect(fileRequests.every((entry) => entry.referer !== undefined)).toBe(true);
+
+    if (!posterTab) throw new Error('the poster page was not kept');
+    // Asked again: answered from the cache, nothing fetched.
+    const before = site.requests.length;
+    expect(await askPreview(ext, posterTab.tabId, posterTab.streamId)).toMatchObject({ outcome: 'ready', source: 'poster' });
+    expect(site.requests.slice(before).filter((entry) => entry.path.startsWith('/previews/pictures/'))).toEqual([]);
+
+    // The real popup shows the cached picture in the Detected tile.
+    if (chromeMajor >= POPUP_WINDOW_CHROME) {
+      await posterTab.page.bringToFront();
+      const known = new Set(browser.targets());
+      const worker = await (await serviceWorker()).worker();
+      await worker?.evaluate(() => chrome.action.openPopup());
+      const popupTarget = await browser.waitForTarget((target) => !known.has(target) && target.url().includes('/popup/index.html'), { timeout: 10_000 });
+      const popup = await popupTarget.asPage();
+      await popup.waitForSelector('[data-preview="ready"] img[src^="blob:"]', { timeout: 15_000 });
+      await popup.close();
+    }
+    await posterTab.page.close();
     await ext.close();
   });
 

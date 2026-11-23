@@ -174,7 +174,8 @@ export class RequestContextRules {
         requestDomains: [host],
         initiatorDomains: [this.#extensionId],
         tabIds: [TAB_ID_NONE],
-        resourceTypes: ['xmlhttprequest'],
+        // `media`: the offscreen document's hidden <video> that makes previews (1.2.0) loads with it.
+        resourceTypes: ['xmlhttprequest', 'media'],
       },
     };
   }

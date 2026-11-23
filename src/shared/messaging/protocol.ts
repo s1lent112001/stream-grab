@@ -1,7 +1,8 @@
 import type { StartDownloadsResult } from '@/core/download/task-service';
 import type { RequestContext } from '@/core/models/detected-stream';
 import type { DownloadRequest, EngineReport, EngineWork, MediaReport, SaveRequest } from '@/core/models/download-task';
-import type { DomSource, FrameMetadata } from '@/shared/types/page-metadata';
+import type { PreviewMakeRequest, PreviewMakeResult } from '@/core/preview/preview-job';
+import type { DomSource, FrameMetadata, PlayerFrameRequest, PlayerFrameResult } from '@/shared/types/page-metadata';
 import type { PageTextTrack } from '@/shared/types/text-tracks';
 import { isRecord } from '@/shared/utils/guards';
 import type { SerializedError } from '@/shared/utils/errors';
@@ -71,6 +72,9 @@ export type BackgroundContract = {
   'engine/releaseContext': Exchange<{ leaseId: string }, undefined>;
   /** Engine: the freshest manifest URL and context for a task (the page may have re-signed its link). */
   'engine/freshSource': Exchange<{ taskId: string }, { manifestUrl: string; context: RequestContext } | null>;
+  /** Preview maker (offscreen, 1.2.0): apply the previewed stream's Referer/Origin to requests to `url`'s host. */
+  'preview/acquireContext': Exchange<{ previewId: string; url: string }, { leaseId: string | null }>;
+  'preview/releaseContext': Exchange<{ leaseId: string }, undefined>;
 };
 
 export type OffscreenContract = {
@@ -81,6 +85,10 @@ export type OffscreenContract = {
   'engine/cancel': Exchange<{ taskIds: string[] }, undefined>;
   /** The service worker restarted and dropped its header rules: acquire them again. */
   'engine/reacquireContexts': Exchange<undefined, undefined>;
+  /** Make one preview picture (1.2.0): a page picture shrunk, or a frame of the video. */
+  'preview/make': Exchange<PreviewMakeRequest, PreviewMakeResult>;
+  /** Stop preview attempts (the popup closed); each answers `cancelled`. */
+  'preview/cancel': Exchange<{ previewIds: string[] }, undefined>;
 };
 
 export type ContentContract = {
@@ -89,6 +97,8 @@ export type ContentContract = {
   'content/getMetadata': Exchange<undefined, FrameMetadata>;
   /** The first cues of the frame's <video> text tracks (0.7.2): how the player times a page subtitle file. */
   'content/getTextTracks': Exchange<undefined, { tracks: PageTextTrack[] }>;
+  /** A small picture of what one of the frame's <video> elements shows now (1.2.0 previews). */
+  'content/getPlayerFrame': Exchange<PlayerFrameRequest, PlayerFrameResult>;
 };
 
 export interface ContractsByTarget {
@@ -125,4 +135,34 @@ export function isMessageResult(value: unknown): value is MessageResult<unknown>
   if (value['ok'] === true) return true;
   const error = value['error'];
   return value['ok'] === false && isRecord(error) && typeof error['message'] === 'string';
+}
+
+/**
+ * Previews (1.2.0): the popup holds a port to the service worker while it is
+ * open; closing the popup disconnects it, which cancels the previews it asked for.
+ */
+export const PREVIEW_PORT = 'streamgrab/previews';
+
+/** Popup → service worker: make the preview of a stream (of `tabId`'s list, else of a task, found in any tab). */
+export interface PreviewPortRequest {
+  streamId: string;
+  tabId?: number;
+}
+
+/** Service worker → popup: `ready` once the cache holds the picture; `none` keeps the icon. */
+export interface PreviewPortResponse {
+  streamId: string;
+  outcome: 'ready' | 'none';
+}
+
+export function parsePreviewPortRequest(raw: unknown): PreviewPortRequest | null {
+  if (!isRecord(raw) || typeof raw['streamId'] !== 'string' || raw['streamId'].length === 0 || raw['streamId'].length > 64) return null;
+  const tabId = raw['tabId'];
+  if (tabId === undefined) return { streamId: raw['streamId'] };
+  return typeof tabId === 'number' && Number.isInteger(tabId) && tabId >= 0 ? { streamId: raw['streamId'], tabId } : null;
+}
+
+export function parsePreviewPortResponse(raw: unknown): PreviewPortResponse | null {
+  if (!isRecord(raw) || typeof raw['streamId'] !== 'string') return null;
+  return raw['outcome'] === 'ready' || raw['outcome'] === 'none' ? { streamId: raw['streamId'], outcome: raw['outcome'] } : null;
 }

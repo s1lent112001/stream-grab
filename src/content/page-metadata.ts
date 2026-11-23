@@ -1,4 +1,11 @@
-import { cleanText, METADATA_LIMITS, type FrameMetadata, type VideoElementInfo } from '@/shared/types/page-metadata';
+import {
+  boundedHttpUrl,
+  cleanText,
+  METADATA_LIMITS,
+  type FrameMetadata,
+  type VideoElementInfo,
+  type VideoObjectInfo,
+} from '@/shared/types/page-metadata';
 import { isRecord } from '@/shared/utils/guards';
 
 /**
@@ -18,41 +25,56 @@ function isVideoObject(node: Record<string, unknown>): boolean {
   return type === 'VideoObject' || (Array.isArray(type) && type.includes('VideoObject'));
 }
 
-/** Depth-first search for a schema.org VideoObject name in parsed JSON-LD. */
-function findVideoObjectName(value: unknown, depth = 0): string | undefined {
-  if (depth > 6) return undefined;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const name = findVideoObjectName(item, depth + 1);
-      if (name !== undefined) return name;
-    }
-    return undefined;
-  }
-  if (!isRecord(value)) return undefined;
-  if (isVideoObject(value)) {
-    const name = cleanText(value['name']);
-    if (name !== undefined) return name;
-  }
-  for (const key of ['@graph', 'video', 'mainEntity', 'itemListElement']) {
-    const name = findVideoObjectName(value[key], depth + 1);
-    if (name !== undefined) return name;
+/** First http(s) URL of a `thumbnailUrl` value: a URL or a list of them. */
+function firstThumbnailUrl(value: unknown, base: string): string | undefined {
+  const values: unknown[] = Array.isArray(value) ? value.slice(0, 5) : [value];
+  for (const item of values) {
+    const url = boundedHttpUrl(item, METADATA_LIMITS.maxPictureUrlLength, base);
+    if (url !== undefined) return url;
   }
   return undefined;
 }
 
-export function structuredVideoTitle(doc: Document): string | undefined {
+/** Depth-first collection of schema.org VideoObjects with a name or thumbnailUrl in parsed JSON-LD, in document order. */
+function collectVideoObjects(value: unknown, base: string, found: VideoObjectInfo[], depth = 0): void {
+  if (depth > 6 || found.length >= METADATA_LIMITS.maxVideoObjects) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectVideoObjects(item, base, found, depth + 1);
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (isVideoObject(value)) {
+    const object: VideoObjectInfo = {};
+    const name = cleanText(value['name']);
+    const thumbnailUrl = firstThumbnailUrl(value['thumbnailUrl'], base);
+    if (name !== undefined) object.name = name;
+    if (thumbnailUrl !== undefined) object.thumbnailUrl = thumbnailUrl;
+    // Only objects that tell something count against the limit.
+    if (name !== undefined || thumbnailUrl !== undefined) found.push(object);
+  }
+  for (const key of ['@graph', 'video', 'mainEntity', 'itemListElement']) {
+    collectVideoObjects(value[key], base, found, depth + 1);
+  }
+}
+
+/** The JSON-LD VideoObjects of the document (at most `maxVideoObjects`). */
+export function structuredVideoObjects(doc: Document): VideoObjectInfo[] {
+  const found: VideoObjectInfo[] = [];
   const scripts = [...doc.querySelectorAll('script[type="application/ld+json"]')].slice(0, MAX_JSON_LD_SCRIPTS);
   for (const script of scripts) {
     const text = script.textContent;
     if (text.length === 0 || text.length > MAX_JSON_LD_LENGTH) continue;
     try {
-      const name = findVideoObjectName(JSON.parse(text));
-      if (name !== undefined) return name;
+      collectVideoObjects(JSON.parse(text), doc.baseURI, found);
     } catch {
       // Malformed JSON-LD is common; ignore it.
     }
   }
-  return undefined;
+  return found;
+}
+
+export function structuredVideoTitle(doc: Document): string | undefined {
+  return structuredVideoObjects(doc).find((object) => object.name !== undefined)?.name;
 }
 
 function labelledByText(doc: Document, element: Element): string | undefined {
@@ -72,7 +94,34 @@ export function describeVideoElement(doc: Document, video: HTMLVideoElement): Vi
   if (Number.isFinite(video.duration) && video.duration > 0) info.duration = video.duration;
   if (video.videoWidth > 0) info.width = video.videoWidth;
   if (video.videoHeight > 0) info.height = video.videoHeight;
+  const base = doc.baseURI;
+  const src = videoSrc(doc, video);
+  if (src !== undefined) info.src = src;
+  const sources = [...video.querySelectorAll('source[src]')]
+    .slice(0, METADATA_LIMITS.maxVideoSources)
+    .map((source) => boundedHttpUrl(source.getAttribute('src'), METADATA_LIMITS.maxUrlLength, base))
+    .filter((url) => url !== undefined);
+  if (sources.length > 0) info.sources = sources;
+  const poster = boundedHttpUrl(video.getAttribute('poster'), METADATA_LIMITS.maxPictureUrlLength, base);
+  if (poster !== undefined) info.poster = poster;
+  if (hasPicture(video)) info.hasPicture = true;
   return info;
+}
+
+/**
+ * The http(s) URL the element plays: currentSrc, else its src attribute (none for blob: and data:).
+ * Never the page's own URL, which an empty `src=""` can resolve to.
+ */
+export function videoSrc(doc: Document, video: HTMLVideoElement): string | undefined {
+  const src =
+    boundedHttpUrl(video.currentSrc, METADATA_LIMITS.maxUrlLength) ??
+    boundedHttpUrl(video.getAttribute('src'), METADATA_LIMITS.maxUrlLength, doc.baseURI);
+  return src === undefined || src.split('#')[0] === doc.URL.split('#')[0] ? undefined : src;
+}
+
+/** The element shows a decoded frame now (HAVE_CURRENT_DATA or more, with a picture size). */
+export function hasPicture(video: HTMLVideoElement): boolean {
+  return video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0;
 }
 
 export function collectFrameMetadata(doc: Document, win: Window): FrameMetadata {
@@ -86,9 +135,19 @@ export function collectFrameMetadata(doc: Document, win: Window): FrameMetadata 
   const documentTitle = cleanText(doc.title);
   const socialTitle =
     metaContent(doc, 'meta[property="og:title"]') ?? metaContent(doc, 'meta[name="twitter:title"]');
-  const structuredTitle = structuredVideoTitle(doc);
+  const videoObjects = structuredVideoObjects(doc);
+  const structuredTitle = videoObjects.find((object) => object.name !== undefined)?.name;
+  const ogType = metaContent(doc, 'meta[property="og:type"]')?.toLowerCase();
+  const ogImage = boundedHttpUrl(
+    doc.querySelector<HTMLMetaElement>('meta[property="og:image"], meta[property="og:image:url"]')?.content,
+    METADATA_LIMITS.maxPictureUrlLength,
+    doc.baseURI,
+  );
   if (documentTitle !== undefined) metadata.documentTitle = documentTitle;
   if (socialTitle !== undefined) metadata.socialTitle = socialTitle;
   if (structuredTitle !== undefined) metadata.structuredTitle = structuredTitle;
+  if (videoObjects.length > 0) metadata.videoObjects = videoObjects;
+  if (ogType !== undefined) metadata.ogType = ogType;
+  if (ogImage !== undefined) metadata.ogImage = ogImage;
   return metadata;
 }
