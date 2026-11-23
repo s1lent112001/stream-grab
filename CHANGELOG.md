@@ -24,8 +24,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Settings is grouped into Downloads, Subtitles, Detection and Appearance sections. "Remove
-  finished tasks" moved into Downloads.
+- Settings is grouped into Downloads, Subtitles, Detection and Appearance sections, each with a
+  bold heading that folds its options (the choice is remembered). "Remove finished tasks" moved
+  into Downloads.
 
 ## [1.0.0] - 2026-11-23
 
