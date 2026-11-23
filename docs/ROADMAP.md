@@ -204,6 +204,9 @@ so the listing never promises a feature the store version lacks.
    repository.
 4. Only after v1.0.0 is live on the store: the old repository is deleted.
 
+Done 2026-11-23: steps 1 to 3 (new repository, name and summary in the manifest, listing draft,
+release 1.0.0). Next: the store upload, then step 4.
+
 **v1.1.0: cleaner list and settings**
 
 - **Junk filter.** Do not list ads, thumbnails, sprite sheets and hover previews: too short or too

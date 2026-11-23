@@ -1,6 +1,6 @@
 # StreamGrab privacy policy
 
-Last updated: 13 November 2026 (StreamGrab 0.9.0)
+Last updated: 23 November 2026 (StreamGrab 1.0.0)
 
 StreamGrab is a browser extension that saves the videos a web page plays. It runs entirely in
 your browser. It has no server, no account and no analytics, and **it does not collect, sell or

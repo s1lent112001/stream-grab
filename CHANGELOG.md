@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-23
+
 ### Changed
 
 - The extension is named "StreamGrab - Video Downloader" in Chrome and on the store, with a
@@ -340,4 +342,5 @@ Notably: merging is stream copy only (no re-encoding); SAMPLE-AES and DRM-protec
 not supported; subtitles are ignored; the bundled FFmpeg.wasm core is licensed
 GPL-2.0-or-later and adds 32 MB to the extension.
 
-[Unreleased]: https://github.com/s1lent112001/stream-grab/commits/main
+[Unreleased]: https://github.com/s1lent112001/stream-grab/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/s1lent112001/stream-grab/releases/tag/v1.0.0
