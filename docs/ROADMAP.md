@@ -202,7 +202,7 @@ so the listing never promises a feature the store version lacks.
 3. **Release**: version, CHANGELOG, GitHub Release in the new repository, ZIP, store upload. In the
    store console: the new description, and the homepage, support and privacy policy URLs of the new
    repository.
-4. Only after v1.0.0 is live on the store: the old repository is deleted.
+4. Only after v1.0.0 is live on the store: the old repository is closed.
 
 Done 2026-11-23: steps 1 to 3 (new repository, name and summary in the manifest, listing draft,
 release 1.0.0). Next: the store upload, then step 4.
