@@ -7,6 +7,8 @@
  *                   as Referer, so it proves the picture is fetched with the page's Referer);
  * - `player`:       a playing MSE player (no http `src`) of an HLS fMP4 stream: the content script
  *                   draws the frame it shows;
+ * - `ad-slot`:      the same player after an empty ad-slot `<video>` (Bradmax), of an HLS MPEG-TS
+ *                   stream, so only the player's frame can give a picture;
  * - `file`:         a file from another site (127.0.0.1 ↔ localhost) without CORS, playing: the
  *                   content script's canvas is locked, so the offscreen document makes a frame
  *                   (403 without a local page as Referer: the hidden video needs the `media` rule);
@@ -30,7 +32,17 @@ import { serveFile } from './progressive-routes.ts';
 
 export const PREVIEW_PAGE_PREFIX = '/previews/';
 
-export type PreviewCaseName = 'poster' | 'player' | 'file' | 'hls-fmp4' | 'dash' | 'hls-ts' | 'video-object' | 'video-og' | 'article-og';
+export type PreviewCaseName =
+  | 'poster'
+  | 'player'
+  | 'ad-slot'
+  | 'file'
+  | 'hls-fmp4'
+  | 'dash'
+  | 'hls-ts'
+  | 'video-object'
+  | 'video-og'
+  | 'article-og';
 
 export interface PreviewCase {
   name: PreviewCaseName;
@@ -55,6 +67,13 @@ export const PREVIEW_CASES: readonly PreviewCase[] = [
     stream: `${page('player')}/master.m3u8`,
     expected: 'player',
     note: 'A playing MSE player (HLS fMP4): the frame it shows, drawn by the content script.',
+  },
+  {
+    name: 'ad-slot',
+    path: page('ad-slot'),
+    stream: `${page('ad-slot')}/master.m3u8`,
+    expected: 'player',
+    note: 'A playing MSE player of an HLS MPEG-TS stream after the player’s empty ad-slot <video> (as Bradmax players do): the frame it shows.',
   },
   {
     name: 'file',
@@ -107,6 +126,40 @@ ${body}
 /** Script: `h264` is true when Chrome plays H.264 (Chrome for Testing 116 does not). */
 const H264 = `const h264 = MediaSource.isTypeSupported('${MP4_TYPE}');`;
 
+/**
+ * A player that fetches its HLS manifest and plays through MSE (no http `src`): two fMP4 segments
+ * of the `player` stream (WebM without H.264). `adSlot`: an empty `<video>` before it.
+ */
+function msePlayer(name: PreviewCaseName, adSlot: boolean): string {
+  const media = page('player');
+  // Stacked like Bradmax's player: the ad slot under the video, both filling the box.
+  const fill = 'position:absolute;top:0;left:0;width:100%;height:100%';
+  return `<div class="player" style="position:relative;width:320px;height:180px;background:#000">
+${adSlot ? `<video class="ad-slot" style="${fill}"></video>` : ''}
+<video id="v" title="MSE sample" muted style="${fill}"></video></div>
+<script>${H264}
+(async () => {
+  await fetch('${page(name)}/master.m3u8').then((r) => r.text());
+  document.body.dataset.stream = '${page(name)}/master.m3u8';
+  const video = document.getElementById('v');
+  const source = new MediaSource();
+  video.src = URL.createObjectURL(source);
+  await new Promise((done) => source.addEventListener('sourceopen', done, { once: true }));
+  const parts = h264 ? ['${media}/v180/init.mp4', '${media}/v180/seg-0.m4s', '${media}/v180/seg-1.m4s'] : ['${media}/clip.webm'];
+  const buffer = source.addSourceBuffer(h264 ? '${MP4_TYPE}' : 'video/webm; codecs="vp8, opus"');
+  for (const part of parts) {
+    buffer.appendBuffer(await fetch(part).then((r) => r.arrayBuffer()));
+    await new Promise((done) => buffer.addEventListener('updateend', done, { once: true }));
+  }
+  source.endOfStream();
+  video.addEventListener('timeupdate', () => {
+    if (video.currentTime > 0.3 && video.readyState >= 2) document.body.dataset.playing = 'true';
+  });
+  await video.play();
+})();
+</script>`;
+}
+
 function casePage(name: PreviewCaseName): string {
   const self = PREVIEW_CASES.find((candidate) => candidate.name === name);
   const note = `<p>${self?.note ?? ''} Open the StreamGrab popup on this tab to see the preview.</p>`;
@@ -124,34 +177,11 @@ document.body.dataset.stream = src;
 </script>`,
       );
     case 'player':
-      return html(
-        'Preview: MSE player',
-        `${note}
-<video id="v" title="MSE sample" muted controls width="320"></video>
-<script>${H264}
-(async () => {
-  await fetch('${page('player')}/master.m3u8').then((r) => r.text());
-  document.body.dataset.stream = '${page('player')}/master.m3u8';
-  const video = document.getElementById('v');
-  const source = new MediaSource();
-  video.src = URL.createObjectURL(source);
-  await new Promise((done) => source.addEventListener('sourceopen', done, { once: true }));
-  const parts = h264
-    ? ['${page('player')}/v180/init.mp4', '${page('player')}/v180/seg-0.m4s', '${page('player')}/v180/seg-1.m4s']
-    : ['${page('player')}/clip.webm'];
-  const buffer = source.addSourceBuffer(h264 ? '${MP4_TYPE}' : 'video/webm; codecs="vp8, opus"');
-  for (const part of parts) {
-    buffer.appendBuffer(await fetch(part).then((r) => r.arrayBuffer()));
-    await new Promise((done) => buffer.addEventListener('updateend', done, { once: true }));
-  }
-  source.endOfStream();
-  video.addEventListener('timeupdate', () => {
-    if (video.currentTime > 0.3 && video.readyState >= 2) document.body.dataset.playing = 'true';
-  });
-  await video.play();
-})();
-</script>`,
-      );
+      return html('Preview: MSE player', `${note}
+${msePlayer('player', false)}`);
+    case 'ad-slot':
+      return html('Preview: MSE player after an ad slot', `${note}
+${msePlayer('ad-slot', true)}`);
     case 'file':
       return html(
         'Preview: a file from another site',

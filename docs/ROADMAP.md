@@ -281,6 +281,9 @@ Decided 2026-11-23 (the "middle" option: no FFmpeg for previews, chosen for perf
   Steps 1 and 2 count only when the `<video>` is known to play this stream: it points at it
   (`src` or a `<source>`), or it is the frame's only `<video>` and has no http(s) source of its own
   (an MSE player; stricter than `durationHint`, so a pre-roll ad's file is not taken for the video).
+  Added 2026-11-23 after a Bradmax player kept the icon (an empty ad-slot `<video>` before its MSE
+  `<video>`): when the tab lists one video, the frame's one `<video>` without an http(s) source
+  that shows a picture counts too.
 - **No FFmpeg for previews.** HLS with MPEG-TS segments (Chrome's MSE cannot read them) gets steps
   1, 2 and 4 only. A TS frame through FFmpeg would load a second 32 MB core next to a merge (memory,
   CPU, seconds of waiting); it moves to Later, done only if many rows keep the icon.

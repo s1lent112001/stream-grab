@@ -41,6 +41,21 @@ describe('playingVideo', () => {
     expect(playingVideo(hls(), frame({ videos: [{}, {}] }))).toBeUndefined();
     expect(playingVideo(hls(), null)).toBeUndefined();
   });
+
+  it('takes an MSE player next to an empty ad-slot <video> when the page lists one video and only the player shows a picture', () => {
+    // Bradmax: an empty `bs-v-supporting-ad-play` <video> before the MSE player.
+    const adSlot = frame({ videos: [{}, { hasPicture: true }] });
+    expect(playingVideo(hls(), adSlot, 1)?.index).toBe(1);
+    expect(previewSources({ stream: hls(), frame: adSlot, top: adSlot, videosOnPage: 1 })[0]).toEqual({ kind: 'player', frameId: 0, index: 1 });
+    // Not when the page lists several videos, or before the player shows anything.
+    expect(playingVideo(hls(), adSlot, 2)).toBeUndefined();
+    expect(playingVideo(hls(), frame({ videos: [{}, {}] }), 1)).toBeUndefined();
+    // Two players without an http source show a picture: which one plays the stream is unknown.
+    expect(playingVideo(hls(), frame({ videos: [{ hasPicture: true }, { hasPicture: true }] }), 1)).toBeUndefined();
+    // An ad playing its file is never taken, even while the player shows nothing.
+    expect(playingVideo(hls(), frame({ videos: [{ src: 'https://ads.example/ad.mp4', hasPicture: true }, {}] }), 1)).toBeUndefined();
+    expect(playingVideo(hls(), frame({ videos: [{ src: 'https://ads.example/ad.mp4', hasPicture: true }, { hasPicture: true }] }), 1)?.index).toBe(1);
+  });
 });
 
 describe('previewSources', () => {

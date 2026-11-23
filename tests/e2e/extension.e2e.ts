@@ -1017,7 +1017,7 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       const page = await browser.newPage();
       await page.goto(pageUrl);
       await page.bringToFront();
-      if (item.name === 'player' || item.name === 'file') {
+      if (item.name === 'player' || item.name === 'ad-slot' || item.name === 'file') {
         await page.waitForSelector('body[data-playing="true"]', { timeout: 30_000 });
       }
       const streamPath = (await page.$eval('body', (body) => body.dataset['stream'])) ?? item.stream;

@@ -1414,7 +1414,11 @@ Wired by Phase 3 (below).
   whose first bytes are of the declared type.
 - **Source order** (`core/preview/preview-sources.ts`, pure): the `<video>` playing the stream is
   the one whose `src` or a `<source>` equals the stream's URL or dedupe key, else the frame's only
-  `<video>` when it has no http(s) source. Then `poster`; `player` when it has a picture and the
+  `<video>` when it has no http(s) source, else (only when the tab lists one video) the one
+  `<video>` without an http(s) source that shows a picture: a Bradmax player puts an empty ad-slot
+  `<video>` before its MSE `<video>`, which kept its HLS MPEG-TS streams at the icon. An ad playing
+  its file has an http(s) source and is never taken; two such `<video>`s showing a picture give
+  none. Then `poster`; `player` when it has a picture and the
   stream is not DRM / CENC (protected video draws black); `file-frame` for a ready file whose
   server took ranges; `segment-frame` for a ready, non-live HLS / DASH stream without DRM, clear
   or AES-128 (the maker gives up on MPEG-TS); `page-picture` from the stream's frame, else the top
@@ -1481,7 +1485,8 @@ Wired by Phase 3 (below).
   `justification` mentions previews.
 - **End-to-end** (Phase 3b, `tests/fixtures/preview-routes.ts`, the fixture site's `/previews/*`):
   one page per source, each with its own stream, in Chrome for Testing 157 and 116. Each preview
-  comes from the expected source (poster, player frame of an MSE player, file frame of a file from
+  comes from the expected source (poster, player frame of an MSE player, also of one after an empty
+  ad-slot `<video>` playing an HLS MPEG-TS stream, file frame of a file from
   another site whose canvas is locked, segment frame of HLS fMP4 and DASH, page picture of a
   `VideoObject` and of a video page's `og:image`), is at most 104 × 104 and 32 KB and is not a
   blank frame; HLS MPEG-TS and an article's `og:image` give the icon (a cached failure). Page

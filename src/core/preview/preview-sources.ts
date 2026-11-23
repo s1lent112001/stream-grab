@@ -20,7 +20,9 @@ import { dedupeKey } from '@/shared/utils/url';
  * 5. the static icon, when every source fails (not listed).
  *
  * Steps 1 and 2 use a `<video>` only when it is known to play the stream: it points at it
- * (`src` or a `<source>`), or it is the frame's only `<video>` and plays nothing else.
+ * (`src` or a `<source>`), or it is the frame's only `<video>` and plays nothing else, or (when
+ * the tab lists one video) it is the only `<video>` of the frame that plays no http URL and shows a
+ * picture: an MSE player next to a player's empty ad-slot `<video>`.
  */
 export type PreviewSource =
   | { kind: 'poster'; url: string }
@@ -67,15 +69,25 @@ function pointsAt(video: VideoElementInfo, stream: PreviewStream): boolean {
   return urls.some((url) => url === stream.url || dedupeKey(url) === stream.dedupeKey);
 }
 
-/** The `<video>` of the frame known to play the stream, if any. */
-export function playingVideo(stream: PreviewStream, frame: FrameMetadata | null): PlayingVideo | undefined {
+/** It plays no http(s) file or manifest of its own: an MSE player (`blob:` src), or an empty element. */
+const playsNoUrl = (video: VideoElementInfo): boolean => video.src === undefined && (video.sources ?? []).length === 0;
+
+/**
+ * The `<video>` of the frame known to play the stream, if any. `videosOnPage`: videos the tab
+ * lists; when it is one, an MSE player next to empty `<video>` elements (a player's ad slot) is
+ * taken too, if it is the only one of them showing a picture.
+ */
+export function playingVideo(stream: PreviewStream, frame: FrameMetadata | null, videosOnPage = 0): PlayingVideo | undefined {
   if (!frame) return undefined;
   const index = frame.videos.findIndex((video) => pointsAt(video, stream));
   if (index >= 0) return { index, video: frame.videos[index]! };
   const only = frame.videos.length === 1 ? frame.videos[0] : undefined;
   // The only <video>, unless it plays another file or manifest (an MSE player has no http src).
-  if (only && only.src === undefined && (only.sources ?? []).length === 0) return { index: 0, video: only };
-  return undefined;
+  if (only && playsNoUrl(only)) return { index: 0, video: only };
+  if (videosOnPage !== 1) return undefined;
+  // An ad playing a file has an http src and is never taken; nor is anything when two show a picture.
+  const showing = frame.videos.flatMap((video, at) => (playsNoUrl(video) && video.hasPicture === true ? [{ index: at, video }] : []));
+  return showing.length === 1 ? showing[0] : undefined;
 }
 
 /** Protected by DRM: the player's canvas shows black, and no frame can be made. */
@@ -120,7 +132,7 @@ function declaredPicture(meta: FrameMetadata, title: string | undefined, videosO
 /** The sources to try for a stream's preview, in order; empty means the static icon. */
 export function previewSources({ stream, frame, top, videosOnPage }: PreviewFacts): PreviewSource[] {
   const sources: PreviewSource[] = [];
-  const playing = playingVideo(stream, frame);
+  const playing = playingVideo(stream, frame, videosOnPage);
   if (playing?.video.poster !== undefined) sources.push({ kind: 'poster', url: playing.video.poster });
   if (playing?.video.hasPicture === true && !isProtected(stream)) {
     const player: PreviewSource = { kind: 'player', frameId: stream.frameId, index: playing.index };
