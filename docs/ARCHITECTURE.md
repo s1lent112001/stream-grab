@@ -159,6 +159,21 @@ Phase 8). Workers started by extension pages get the same policy.
      rules are removed when a new service-worker instance starts. Inspection holds a rule for the
      length of one fetch; a download holds one lease per (task, host) for the whole task (see
      "Download engine"), re-acquired after a worker restart.
+     Since 1.2.3 the service worker's own checks (manifests, file heads, subtitle files: one URL
+     each, `oneUrl`) do not wait for a host held by another context, such as a download from the
+     same server for another page: they get a rule for that URL alone (`urlFilter: |url|`,
+     priority 2, both headers set or removed), which outranks the host's rule (a header a
+     higher-priority rule sets or removes is not changed by lower ones; checked in Chrome by the
+     e2e "holds its Referer rule" case). A host rule counts the URLs its holders asked for (a
+     download's lease names its file): a check of one of those URLs gets no rule of its own, which
+     would change the holder's requests, but borrows the host rule (the server takes that context
+     for this URL). Any caller waits while a one-URL rule of another context holds its own URL, and
+     a host share taken while such a rule came is given back. A URL with `*`, `^` or `|` waits for
+     the host as before. Every wait is covered by the request's own 15 s timeout (the `signal`
+     given to `acquire`), so a check can no longer hang, nor hold one of the three inspection
+     slots, for the length of a download. Known limit: a check redirected to another URL on the
+     same host leaves its one-URL rule behind, so the redirected request carries the host rule's
+     context (the download's) instead of its own.
   4. Streams found in the DOM (no request seen yet) get the Referer the element's own request
      would carry under the default referrer policy; a real network observation replaces it.
 - Logging goes through `createLogger`, which redacts URLs (query values, credentials, fragments,

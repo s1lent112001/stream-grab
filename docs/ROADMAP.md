@@ -19,6 +19,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.2.0 | Video previews instead of the static icon (below) |
 | v1.2.1 | Fix: after Back/Forward, on single-page sites and on sites whose service worker loads their pages, the list showed videos of other pages. Released 2026-11-24 |
 | v1.2.2 | Junk filter hides a page's grid of previews (no length threshold); hidden videos in a folded section after the list. Released 2026-11-24 |
+| v1.2.3 | Fix: a video stayed "Inspecting…" while a download from the same server, for another page, held its Referer rule (v1.4.0 Phase 1 item, done early). 2026-11-26 |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | Optimisation and bug fixes, no new feature (below); replaces the UI redesign (dropped 2026-11-24) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
@@ -368,7 +369,8 @@ on 2026-11-24; each item is checked again (and its impact measured where it can 
 
 - **Phase 1: bugs.** Video checks wait without a time limit for another context's Referer rule on
   the same host (`request-context.ts` `acquire`), so a running download can hold back detection on
-  that site, and three such waits stop detection in every tab; navigation race: the tab generation
+  that site, and three such waits stop detection in every tab (FIXED in 1.2.3, 2026-11-26: one-URL rule of
+  higher priority, wait bounded by the 15 s timeout; e2e "holds its Referer rule"); navigation race: the tab generation
   is read after an `await` in `#handleCandidate`, so a video of the old page can join the new list;
   Queue count stuck when the user leaves Detected while a grab is starting; Settings sliders write
   on every step and can jump back; a quick Retry can leave a task in "downloading"; two callers can

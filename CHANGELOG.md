@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-11-26
+
+### Fixed
+
+- A video could stay "Inspecting…" until a download from the same server ended, when that
+  download came from another page of the site (its Referer rule held the server). The check now
+  gets a rule for its own URL and goes ahead at once, and waiting for a rule can no longer outlast
+  the 15-second request timeout, so a stuck check never holds back detection in other tabs.
+
 ## [1.2.2] - 2026-11-24
 
 ### Changed

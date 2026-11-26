@@ -637,6 +637,43 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
     await again.close();
   });
 
+  it('checks a video on another page of a server while a download from it holds its Referer rule (1.2.3)', async () => {
+    // The engine fetches the slow protected file with its page as Referer: its header rule holds the server for the whole download.
+    const filesUrl = `${site.origin}${SLOW_PROTECTED_PAGE_PATH}`;
+    const filesPage = await browser.newPage();
+    await filesPage.goto(filesUrl);
+    const ext = await extensionPage();
+    const { tabId, streams } = await detected(ext, filesUrl, [SLOW_PROTECTED_FILE_PATH]);
+    const started = await send<{ created: { taskId: string }[] }>(ext, 'downloads/start', {
+      requests: [{ ...request(tabId, streams[0] as DetectedStream), fileName: 'Held rule' }],
+    });
+    const taskId = started.created[0]?.taskId ?? '';
+    const taskIn = async () => (await tasks(ext)).find((task) => task.id === taskId);
+    await waitFor('the engine fetching the file', async () => {
+      const task = await taskIn();
+      if (task?.status === 'failed') throw new Error(task.statusMessage);
+      return task?.status === 'downloading' && task.progressive?.fetch === 'extension' && (task.progress?.bytes ?? 0) > 0 ? task : undefined;
+    }, 60_000);
+
+    // Another page of the same server, with another Referer that its protected stream needs: checked at once, not after the download.
+    const demoUrl = `${site.origin}/download`;
+    const demo = await browser.newPage();
+    await demo.goto(demoUrl);
+    await detected(ext, demoUrl, ['/download/plain/plain.m3u8', '/download/protected/protected.m3u8']);
+    const meanwhile = await taskIn();
+    expect(meanwhile?.status).toBe('downloading');
+    expect(meanwhile?.progress?.bytes ?? 0).toBeLessThan(24 * 1024 * 1024);
+
+    // The download itself kept its own Referer and completes.
+    const done = await waitFor('the held-rule file', async () => {
+      const task = await taskIn();
+      if (task?.status === 'failed') throw new Error(task.statusMessage);
+      return task?.status === 'completed' ? task : undefined;
+    }, 60_000);
+    expect(Buffer.compare(new Uint8Array(readFileSync(done.output.saved?.path ?? '')), slowProtectedBytes(await syntheticFiles()))).toBe(0);
+    await Promise.all([filesPage.close(), demo.close(), ext.close()]);
+  });
+
   it('detects nothing on a blocked site and says so in the popup (0.8.0)', async ({ skip }) => {
     const pageUrl = `http://${BLOCKED_HOST}:${new URL(site.origin).port}/download`;
     const before = site.requests.length;

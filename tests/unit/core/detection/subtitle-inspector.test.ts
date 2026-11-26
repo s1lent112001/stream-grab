@@ -57,7 +57,7 @@ describe('page subtitle files (0.7.2)', () => {
       ok: true,
       language: 'zh',
     });
-    expect(acquireContext).toHaveBeenCalledWith(SITE_URL, { referer: 'https://site.example/' });
+    expect(acquireContext).toHaveBeenCalledWith(SITE_URL, { referer: 'https://site.example/' }, expect.any(AbortSignal));
     expect(release).toHaveBeenCalled();
 
     const missing = vi.fn(() => Promise.resolve(new Response('', { status: 404 })));

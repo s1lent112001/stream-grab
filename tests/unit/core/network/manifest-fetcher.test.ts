@@ -104,7 +104,23 @@ describe('ManifestFetcher', () => {
     };
     const context = { referer: 'https://site.example/watch' };
     await new ManifestFetcher({ fetch, acquireContext }).fetchManifest('https://cdn.example/a.m3u8', context);
-    expect(acquireContext).toHaveBeenCalledWith('https://cdn.example/a.m3u8', context);
+    expect(acquireContext).toHaveBeenCalledWith('https://cdn.example/a.m3u8', context, expect.any(AbortSignal));
     expect(events).toEqual(['acquire https://cdn.example/a.m3u8', 'fetch https://cdn.example/a.m3u8', 'release']);
+  });
+
+  it('times out while waiting for another context rule, without fetching', async () => {
+    const fetch = vi.fn<FetchFunction>();
+    // Waits (for a download's rule on the same server) until the request gives up.
+    const acquireContext = (_url: string, _context: unknown, signal?: AbortSignal) =>
+      new Promise<() => Promise<void>>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    const result = await new ManifestFetcher({ fetch, acquireContext, timeoutMs: 20 }).fetchManifest('https://cdn.example/a.m3u8', {
+      referer: 'https://site.example/',
+    });
+    expect(result).toEqual({ kind: 'timeout' });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

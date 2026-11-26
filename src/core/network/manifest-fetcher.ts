@@ -6,9 +6,11 @@ import { redactText } from '@/shared/utils/redact';
 
 /**
  * Applies the page's request context (Referer/Origin) to the extension's own
- * requests to `url` until the returned release function is called.
+ * requests to `url` until the returned release function is called. `signal`
+ * stops waiting for another context's rule (it rejects with an AbortError):
+ * the request's own timeout also covers that wait.
  */
-export type AcquireRequestContext = (url: string, context: RequestContext) => Promise<() => Promise<void>>;
+export type AcquireRequestContext = (url: string, context: RequestContext, signal?: AbortSignal) => Promise<() => Promise<void>>;
 
 export type FetchFunction = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -97,7 +99,7 @@ export class ManifestFetcher {
 
     let release = noRelease;
     try {
-      release = await this.#acquire(url, context);
+      release = await this.#acquire(url, context, controller.signal);
       const response = await this.#fetch(url, {
         credentials: 'include',
         redirect: 'follow',

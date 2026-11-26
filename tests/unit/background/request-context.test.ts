@@ -135,6 +135,167 @@ describe('RequestContextRules', () => {
     expect(api.rules.size).toBe(2);
   });
 
+  it('gives a one-URL caller its own higher-priority rule instead of waiting for another context on the host', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', { referer: 'https://site.example/a', origin: 'https://site.example' });
+    const check = await rules.acquire('https://cdn.example.com/b/master.m3u8?t=1#x', referer, { oneUrl: true });
+    expect(api.rules.get(2)).toEqual({
+      id: 2,
+      priority: 2,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'referer', operation: 'set', value: 'https://site.example/watch?v=1' },
+          // The host rule's Origin must not reach a request whose page sent none.
+          { header: 'origin', operation: 'remove' },
+        ],
+      },
+      condition: {
+        urlFilter: '|https://cdn.example.com/b/master.m3u8?t=1|',
+        initiatorDomains: [EXTENSION_ID],
+        tabIds: [-1],
+        resourceTypes: ['xmlhttprequest', 'media'],
+      },
+    });
+    // Same URL and context: shared. The host rule is untouched.
+    const again = await rules.acquire('https://cdn.example.com/b/master.m3u8?t=1', referer, { oneUrl: true });
+    expect(api.rules.size).toBe(2);
+    await check();
+    await again();
+    expect([...api.rules.keys()]).toEqual([1]);
+    await download();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('shares the host rule with a one-URL caller of the same context', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    const check = await rules.acquire('https://cdn.example.com/other.mp4', referer, { oneUrl: true });
+    expect(api.log).toEqual(['add 1']);
+    await check();
+    await download();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('makes a host caller wait for the host, not for one-URL rules', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    const check = await rules.acquire('https://cdn.example.com/x.m3u8', { referer: 'https://other.example/' }, { oneUrl: true });
+    await download();
+    // The host is free again although a one-URL rule on it is still held.
+    const next = await rules.acquire('https://cdn.example.com/y.mp4', { referer: 'https://third.example/' });
+    expect(api.rules.size).toBe(2);
+    await next();
+    await check();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('waits when the same URL is held by another context, until released or aborted', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    const url = 'https://cdn.example.com/x.m3u8';
+    const first = await rules.acquire(url, { referer: 'https://one.example/' }, { oneUrl: true });
+    const controller = new AbortController();
+    const waiting = rules.acquire(url, { referer: 'https://two.example/' }, { oneUrl: true, signal: controller.signal });
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+
+    const second = rules.acquire(url, { referer: 'https://two.example/' }, { oneUrl: true });
+    await first();
+    const releaseSecond = await second;
+    expect(api.rules.get(3)?.action.requestHeaders?.[0]?.value).toBe('https://two.example/');
+    await releaseSecond();
+    await download();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('stops waiting for another context on the host when the signal aborts', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const first = await rules.acquire('https://cdn.example.com/a', referer);
+    const controller = new AbortController();
+    const waiting = rules.acquire('https://cdn.example.com/b', { referer: 'https://other.example/' }, { signal: controller.signal });
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    await first();
+    expect(api.log).toEqual(['add 1', 'remove 1']);
+  });
+
+  it('lets a one-URL caller borrow the host rule of a holder that fetches that very URL, never overriding it', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    const check = await rules.acquire('https://cdn.example.com/movie.mp4', { referer: 'https://other.example/' }, { oneUrl: true });
+    // No rule of its own: one for this URL would change the download's own requests.
+    expect(api.log).toEqual(['add 1']);
+    await download();
+    expect(api.rules.size).toBe(1);
+    await check();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('makes a host caller wait while a one-URL rule of another context holds its URL', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    const check = await rules.acquire('https://cdn.example.com/x.mp4', { referer: 'https://other.example/' }, { oneUrl: true });
+    let acquired = false;
+    // A preview of x.mp4 with the download's context: the host rule is shareable, the URL rule is not.
+    const preview = rules.acquire('https://cdn.example.com/x.mp4', referer).then((release) => {
+      acquired = true;
+      return release;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(acquired).toBe(false);
+    await check();
+    await (await preview)();
+    await download();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('gives back a host share taken while a one-URL rule of another context came for the same URL', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    // The host rule is being installed for another URL; a second holder joins it for x.mp4 meanwhile.
+    const installer = rules.acquire('https://cdn.example.com/a.mp4', referer);
+    let joined = false;
+    const joiner = rules.acquire('https://cdn.example.com/x.mp4', referer).then((release) => {
+      joined = true;
+      return release;
+    });
+    // x.mp4 is not counted on the host yet: the check gets its own rule for it.
+    const check = await rules.acquire('https://cdn.example.com/x.mp4', { referer: 'https://other.example/' }, { oneUrl: true });
+    const releaseInstaller = await installer;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(joined).toBe(false);
+    await check();
+    await (await joiner)();
+    await releaseInstaller();
+    expect(api.rules.size).toBe(0);
+  });
+
+  it('waits for the host when a one-URL caller URL cannot be written as an exact filter', async () => {
+    const api = new FakeRulesApi();
+    const rules = new RequestContextRules(api, EXTENSION_ID);
+    const download = await rules.acquire('https://cdn.example.com/movie.mp4', referer);
+    let acquired = false;
+    const check = rules
+      .acquire('https://cdn.example.com/a*b.m3u8', { referer: 'https://other.example/' }, { oneUrl: true })
+      .then((release) => {
+        acquired = true;
+        return release;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(acquired).toBe(false);
+    await download();
+    await (await check)();
+    expect(api.rules.size).toBe(0);
+  });
+
   it('frees the host when installing the rule fails', async () => {
     const api = new FakeRulesApi();
     const update = vi.spyOn(api, 'updateSessionRules').mockRejectedValueOnce(new Error('quota'));

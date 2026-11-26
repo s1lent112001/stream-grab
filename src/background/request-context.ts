@@ -3,6 +3,7 @@ import {
   requestContextKey,
   type RequestContext,
 } from '@/core/models/detected-stream';
+import { isAbortError, raceAbort } from '@/core/protocols/manifest-cache';
 import { parseHttpUrl } from '@/shared/utils/url';
 
 /**
@@ -46,28 +47,67 @@ export interface SessionRulesApi {
 
 export type ReleaseContext = () => Promise<void>;
 
-interface HostRule {
+export interface AcquireOptions {
+  /** Stops waiting for another context's rule (the caller's timeout or cancel): rejects with an AbortError. */
+  signal?: AbortSignal;
+  /**
+   * The caller fetches this one URL and nothing else on its host (a detection
+   * check). When the host's rule holds another context, typically a download
+   * from the same server for another page, it gets a rule for this URL alone
+   * instead of waiting for that download to end (1.2.3). A redirect leaves
+   * that rule behind.
+   */
+  oneUrl?: boolean;
+}
+
+interface SharedRule {
   ruleId: number;
   key: string;
   refs: number;
   installed: Promise<void>;
-  /** Resolves once the rule has been removed and the host is free for another context. */
+  /** Resolves once the rule has been removed and its slot is free for another context. */
   removed: Promise<void>;
   markRemoved: () => void;
+  /**
+   * Host rules: the URLs (as exact filters) their holders asked for, counted. A one-URL rule of
+   * another context for one of them would change the holder's own requests (a download fetching
+   * that very file), so a one-URL caller of such a URL waits for the host instead.
+   */
+  urls: Map<string, number>;
 }
 
 const noRelease: ReleaseContext = () => Promise.resolve();
 const TAB_ID_NONE = -1;
+const HOST_PRIORITY = 1;
+/** A one-URL rule wins over its host's rule: a header a higher-priority rule sets or removes is not changed by lower ones. */
+const URL_PRIORITY = 2;
+
+/**
+ * `|url|`: exactly this URL (requests never carry the fragment). Undefined when
+ * the URL holds a character urlFilter reads as a wildcard or anchor, or one it
+ * does not accept (only printable ASCII).
+ */
+export function exactUrlFilter(url: URL): string | undefined {
+  const copy = new URL(url.href);
+  copy.hash = '';
+  const href = copy.href;
+  if (/[*^|]/.test(href) || /[^\x21-\x7e]/.test(href)) return undefined;
+  return `|${href}|`;
+}
 
 /**
  * Reference-counted DNR session rules, one per host. Callers that need the same
  * context on a host share a rule; a caller with a different context waits until
  * the current rule is released, so two contexts never apply to one host at once.
+ * A one-URL caller (AcquireOptions.oneUrl) does not wait for the host: it gets a
+ * higher-priority rule for its URL, shared and waited for the same way.
  */
 export class RequestContextRules {
   readonly #api: SessionRulesApi;
   readonly #extensionId: string;
-  readonly #hosts = new Map<string, HostRule>();
+  readonly #hosts = new Map<string, SharedRule>();
+  /** One-URL rules, by urlFilter. */
+  readonly #urls = new Map<string, SharedRule>();
   #nextRuleId = 1;
   #ready: Promise<void> | undefined;
 
@@ -91,28 +131,55 @@ export class RequestContextRules {
     return this.#ready;
   }
 
-  async acquire(url: string, context: RequestContext): Promise<ReleaseContext> {
+  async acquire(url: string, context: RequestContext, options: AcquireOptions = {}): Promise<ReleaseContext> {
     if (isEmptyRequestContext(context)) return noRelease;
-    const host = parseHttpUrl(url)?.hostname;
-    if (!host) return noRelease;
-    await this.initialize();
+    const parsed = parseHttpUrl(url);
+    if (!parsed) return noRelease;
+    const host = parsed.hostname;
+    const { signal } = options;
+    await raceAbort(this.initialize(), signal);
     const key = requestContextKey(context);
+    const filter = exactUrlFilter(parsed);
+    const oneUrl = options.oneUrl === true;
 
     for (;;) {
+      if (filter !== undefined) {
+        // A rule for this very URL outranks the host's. A one-URL caller shares it when it holds the
+        // same context; any caller waits while it holds another (it would change this caller's requests).
+        const own = this.#urls.get(filter);
+        if (own && oneUrl) {
+          const release = await this.#join(this.#urls, filter, own, key, undefined, signal);
+          if (release) return release;
+          continue;
+        }
+        if (own && own.key !== key) {
+          await raceAbort(own.removed, signal);
+          continue;
+        }
+      }
       const current = this.#hosts.get(host);
-      if (!current) return this.#install(host, key, context);
-      if (current.key !== key) {
-        await current.removed;
+      if (!current) {
+        return this.#install(this.#hosts, host, key, (id) => this.#hostRule(id, host, context), filter);
+      }
+      let joinKey = key;
+      if (oneUrl && filter !== undefined && current.key !== key) {
+        if (!current.urls.has(filter)) {
+          return this.#install(this.#urls, filter, key, (id) => this.#urlRule(id, filter, context), undefined);
+        }
+        // A holder fetches this very URL with its own context (a download of this file), which the
+        // server takes for it: the check borrows that rule rather than wait for the download to end.
+        joinKey = current.key;
+      }
+      const release = await this.#join(this.#hosts, host, current, joinKey, filter, signal);
+      if (!release) continue;
+      // A one-URL rule of another context for this URL may have come while the host rule was being
+      // installed (before this caller's URL was counted): let go, and wait for it next time round.
+      const other = filter === undefined ? undefined : this.#urls.get(filter);
+      if (other && other.key !== joinKey) {
+        await release();
         continue;
       }
-      try {
-        await current.installed;
-      } catch {
-        continue; // the installing caller failed and cleared the entry; retry
-      }
-      if (this.#hosts.get(host) !== current) continue;
-      current.refs += 1;
-      return this.#releaser(host, current);
+      return release;
     }
   }
 
@@ -121,39 +188,79 @@ export class RequestContextRules {
     return this.#hosts.size;
   }
 
-  async #install(host: string, key: string, context: RequestContext): Promise<ReleaseContext> {
+  /** Shares `entry` when it holds `key`, else waits until it is removed. Undefined: look again. */
+  async #join(
+    slots: Map<string, SharedRule>,
+    slot: string,
+    entry: SharedRule,
+    key: string,
+    url: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<ReleaseContext | undefined> {
+    if (entry.key !== key) {
+      await raceAbort(entry.removed, signal);
+      return undefined;
+    }
+    try {
+      await raceAbort(entry.installed, signal);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return undefined; // the installing caller failed and cleared the entry; retry
+    }
+    if (slots.get(slot) !== entry) return undefined;
+    entry.refs += 1;
+    if (url !== undefined) entry.urls.set(url, (entry.urls.get(url) ?? 0) + 1);
+    return this.#releaser(slots, slot, entry, url);
+  }
+
+  /** `url`: the exact filter the caller asked for, counted on a host rule (undefined for one-URL rules). */
+  async #install(
+    slots: Map<string, SharedRule>,
+    slot: string,
+    key: string,
+    rule: (id: number) => chrome.declarativeNetRequest.Rule,
+    url: string | undefined,
+  ): Promise<ReleaseContext> {
     let markRemoved: () => void = () => undefined;
     const removed = new Promise<void>((resolve) => {
       markRemoved = resolve;
     });
-    const entry: HostRule = {
+    const entry: SharedRule = {
       ruleId: this.#nextRuleId++,
       key,
       refs: 1,
       installed: Promise.resolve(),
       removed,
       markRemoved,
+      urls: new Map(),
     };
-    entry.installed = this.#api.updateSessionRules({ addRules: [this.#rule(entry.ruleId, host, context)] });
-    this.#hosts.set(host, entry);
+    if (url !== undefined) entry.urls.set(url, 1);
+    entry.installed = this.#api.updateSessionRules({ addRules: [rule(entry.ruleId)] });
+    slots.set(slot, entry);
+    // Not abortable: the caller that installs a rule must get its release (or the failure), or nobody removes it.
     try {
       await entry.installed;
     } catch (error) {
-      this.#hosts.delete(host);
+      slots.delete(slot);
       entry.markRemoved();
       throw error;
     }
-    return this.#releaser(host, entry);
+    return this.#releaser(slots, slot, entry, url);
   }
 
-  #releaser(host: string, entry: HostRule): ReleaseContext {
+  #releaser(slots: Map<string, SharedRule>, slot: string, entry: SharedRule, url: string | undefined): ReleaseContext {
     let released = false;
     return async () => {
       if (released) return;
       released = true;
+      if (url !== undefined) {
+        const left = (entry.urls.get(url) ?? 1) - 1;
+        if (left > 0) entry.urls.set(url, left);
+        else entry.urls.delete(url);
+      }
       entry.refs -= 1;
       if (entry.refs > 0) return;
-      this.#hosts.delete(host);
+      slots.delete(slot);
       try {
         await this.#api.updateSessionRules({ removeRuleIds: [entry.ruleId] });
       } finally {
@@ -162,21 +269,36 @@ export class RequestContextRules {
     };
   }
 
-  #rule(id: number, host: string, context: RequestContext): chrome.declarativeNetRequest.Rule {
+  #hostRule(id: number, host: string, context: RequestContext): chrome.declarativeNetRequest.Rule {
     const requestHeaders: chrome.declarativeNetRequest.ModifyHeaderInfo[] = [];
     if (context.referer !== undefined) requestHeaders.push({ header: 'referer', operation: 'set', value: context.referer });
     if (context.origin !== undefined) requestHeaders.push({ header: 'origin', operation: 'set', value: context.origin });
     return {
       id,
-      priority: 1,
+      priority: HOST_PRIORITY,
       action: { type: 'modifyHeaders', requestHeaders },
-      condition: {
-        requestDomains: [host],
-        initiatorDomains: [this.#extensionId],
-        tabIds: [TAB_ID_NONE],
-        // `media`: the offscreen document's hidden <video> that makes previews (1.2.0) loads with it.
-        resourceTypes: ['xmlhttprequest', 'media'],
-      },
+      condition: { requestDomains: [host], ...this.#ownRequests() },
+    };
+  }
+
+  /** Both headers are set or removed: the host's rule, of another context, must not add either. */
+  #urlRule(id: number, urlFilter: string, context: RequestContext): chrome.declarativeNetRequest.Rule {
+    const header = (name: string, value: string | undefined): chrome.declarativeNetRequest.ModifyHeaderInfo =>
+      value === undefined ? { header: name, operation: 'remove' } : { header: name, operation: 'set', value };
+    return {
+      id,
+      priority: URL_PRIORITY,
+      action: { type: 'modifyHeaders', requestHeaders: [header('referer', context.referer), header('origin', context.origin)] },
+      condition: { urlFilter, ...this.#ownRequests() },
+    };
+  }
+
+  #ownRequests(): Pick<chrome.declarativeNetRequest.RuleCondition, 'initiatorDomains' | 'tabIds' | 'resourceTypes'> {
+    return {
+      initiatorDomains: [this.#extensionId],
+      tabIds: [TAB_ID_NONE],
+      // `media`: the offscreen document's hidden <video> that makes previews (1.2.0) loads with it.
+      resourceTypes: ['xmlhttprequest', 'media'],
     };
   }
 }

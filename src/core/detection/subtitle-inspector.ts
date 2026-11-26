@@ -130,7 +130,7 @@ export async function inspectSubtitleFile(
   }, deps.timeoutMs ?? 15_000);
   let release: () => Promise<void> = () => Promise.resolve();
   try {
-    if (deps.acquireContext) release = await deps.acquireContext(url, context);
+    if (deps.acquireContext) release = await deps.acquireContext(url, context, controller.signal);
     const response = await deps.fetch(url, { credentials: 'include', redirect: 'follow', signal: controller.signal });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);

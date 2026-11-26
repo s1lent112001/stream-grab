@@ -190,7 +190,7 @@ describe('inspectProgressiveFile', () => {
     });
     expect(new Headers(server.requests[0]?.init.headers).get('range')).toBe(`bytes=0-${FILE_SNIFF_BYTES - 1}`);
     expect(server.requests[0]?.init).toMatchObject({ credentials: 'include', redirect: 'follow' });
-    expect(acquireContext).toHaveBeenCalledWith(URL_MP4, context);
+    expect(acquireContext).toHaveBeenCalledWith(URL_MP4, context, expect.any(AbortSignal));
     expect(release).toHaveBeenCalledOnce();
     expect(server.sent()).toBeLessThanOrEqual(FILE_SNIFF_BYTES);
   });

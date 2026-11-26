@@ -45,7 +45,9 @@ export function startDetectionService(): DetectionService {
   });
   const network = {
     fetch: (input: string, init: RequestInit) => fetch(input, init),
-    acquireContext: (url: string, context: RequestContext) => rules.acquire(url, context),
+    // Each of these requests fetches one URL: it never waits for a download's rule on the same server (1.2.3).
+    acquireContext: (url: string, context: RequestContext, signal?: AbortSignal) =>
+      rules.acquire(url, context, signal === undefined ? { oneUrl: true } : { oneUrl: true, signal }),
   };
   const fetcher = new ManifestFetcher(network);
   const protocols = new ProtocolRegistry().register(new HlsAdapter({ fetcher })).register(new DashAdapter({ fetcher }));

@@ -243,7 +243,7 @@ export async function inspectProgressiveFile(
 
   let release: () => Promise<void> = () => Promise.resolve();
   try {
-    if (deps.acquireContext) release = await deps.acquireContext(url, context);
+    if (deps.acquireContext) release = await deps.acquireContext(url, context, controller.signal);
     const response = await deps.fetch(url, {
       credentials: 'include',
       redirect: 'follow',
