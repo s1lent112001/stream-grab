@@ -24,7 +24,7 @@ export interface FixtureSite {
  * The fixture site of `npm run fixtures` (detection page, download demo with
  * real synthetic media, progressive files, preview pages), on a free port of 127.0.0.1.
  */
-export async function startFixtureSite(options: { latencyMs: number }): Promise<FixtureSite> {
+export async function startFixtureSite(options: { latencyMs: number; /** Added to every /previews/ answer (a CDN's round trip). */ previewLatencyMs?: number }): Promise<FixtureSite> {
   const media = await syntheticMedia(DEMO_MEDIA);
   const files = await syntheticFiles();
   const route = createFixtureRouter(
@@ -42,7 +42,9 @@ export async function startFixtureSite(options: { latencyMs: number }): Promise<
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const ifRange = req.headers['if-range']?.toString();
     requests.push({ path: url.pathname, referer: req.headers.referer, range: req.headers.range, ...(ifRange !== undefined ? { ifRange } : {}) });
-    sendResponse(res, route(url.pathname, { referer: req.headers.referer, range: req.headers.range, ifRange }));
+    const response = route(url.pathname, { referer: req.headers.referer, range: req.headers.range, ifRange });
+    if (options.previewLatencyMs && url.pathname.startsWith('/previews/')) response.delayMs = (response.delayMs ?? 0) + options.previewLatencyMs;
+    sendResponse(res, response);
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const { port } = server.address() as AddressInfo;

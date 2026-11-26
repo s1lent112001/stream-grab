@@ -20,6 +20,8 @@
  * - `video-og`:     a TS stream on a page whose `og:type` is `video.other`, with `og:image`;
  * - `article-og`:   a TS stream on an article page with `og:image`: never used (pictures the page).
  *
+ * Pages of the preview timing harness (1.2.4) live below /previews/timing/ (preview-timing-routes.ts).
+ *
  * Without H.264 (Chrome for Testing 116) the pages that play a file or MSE play WebM instead and
  * name the stream they play in `<body data-stream>`.
  *
@@ -30,6 +32,7 @@ import type { FixtureResponse } from './fixture-routes.ts';
 import type { SyntheticFiles } from './media/synthetic-files.ts';
 import { dashManifest, H264_CODEC, hlsMasterPlaylist, hlsMediaPlaylist } from './media/synthetic-manifests.ts';
 import type { Rendition, SyntheticMedia } from './media/synthetic-media.ts';
+import { createPreviewTimingRouter, PREVIEW_TIMING_PREFIX } from './preview-timing-routes.ts';
 import { serveFile } from './progressive-routes.ts';
 
 export const PREVIEW_PAGE_PREFIX = '/previews/';
@@ -275,8 +278,11 @@ export function createPreviewRouter(
     { id: AUDIO, language: 'en', rendition: media.fmp4.audio },
   );
 
+  const timing = createPreviewTimingRouter(media, files);
+
   return (pathname, request = {}) => {
     if (pathname === '/previews' || pathname === PREVIEW_PAGE_PREFIX) return ok(HTML, indexPage());
+    if (pathname.startsWith(PREVIEW_TIMING_PREFIX)) return timing(pathname, request);
     const caseOf = (name: string | undefined) => PREVIEW_CASES.find((candidate) => candidate.name === name)?.name;
 
     const pageMatch = /^\/previews\/([\w-]+)$/.exec(pathname);

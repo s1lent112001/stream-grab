@@ -1591,6 +1591,74 @@ A second (`/files/sw-site/*`): a site whose service worker passes its page loads
 the next page's load (`workerStart > 0`) lists only its own video. It failed before the `load`
 report.
 
+## Version 1.2.4
+
+### Preview timing and spikes (Phase 1)
+
+Measured 2026-11-26. Plan: ROADMAP "v1.2.4: faster previews".
+
+**Timing harness** (opt-in `tests/e2e/preview-timing.e2e.ts`, `STREAMGRAB_PREVIEW_TIMING=1`;
+pages in `tests/fixtures/preview-timing-routes.ts` plus the 1.2.0 preview pages). Per case: an
+empty preview cache, the page loaded until its streams are inspected (and it plays where it
+should), 2 s more (`STREAMGRAB_PREVIEW_SETTLE_MS`, the time the extension has before the user
+opens the popup), then the real popup (`chrome.action.openPopup()`, Chrome 127+), recording when
+each tile shows its picture (ms from the popup's navigation start), then the popup again (from the
+cache). Every answer of `/previews/*` waits 150 ms (`STREAMGRAB_PREVIEW_LATENCY_MS`, a CDN's round
+trip). The report (`STREAMGRAB_PREVIEW_REPORT=<file.json>`) keeps every run; later phases rerun it
+the same way.
+
+**Baseline (1.2.3)**, Chrome for Testing 157, median of 3 runs; the list shows after 55–70 ms in
+every case:
+
+| Case | Picture after | Source |
+| --- | --- | --- |
+| A playing, with a poster | 302 ms | poster (fetched although the player shows a frame) |
+| B playing, no poster (MSE) | 80 ms | player |
+| C poster, not played | 286 ms | poster |
+| D MP4 from another site, not played | 323 ms | file frame |
+| E HLS fMP4 / DASH | 947 / 623 ms | segment frame |
+| F MPEG-TS, no picture / locked cross-site file, playing | icon / 310 ms | — / file frame |
+| Popup opened again (cache) | 68–93 ms | — |
+
+Several videos (`/previews/timing/many`, list order): two HLS fMP4 streams on a slow server (each
+segment 3 s) 3965 and 3971 ms; a quick HLS fMP4 4791 ms (964 ms in one run) and a poster 4123
+ms (316 ms in one run), both waiting for the two slow ones to leave the two preview slots; the four
+tiles below the fold (two posters, a TS stream, a quick HLS stream) got nothing, as tiles ask only
+when visible. The offscreen document was never open when the popup opened (it closes after the
+last preview). So: the shared limiter of 2 is the largest delay; the poster-first order costs
+about 220 ms when the player already shows a frame; everything else waits for the popup.
+
+**Spikes** (`.cache/spike/fast-preview-spike.mjs`, not in git; same results in Chrome for Testing
+157 and 116):
+
+- **WebP in the service worker**: `fetch` → `createImageBitmap(blob)` → `OffscreenCanvas` 2d →
+  `convertToBlob({ type: 'image/webp' })` works in both: an 80 KB JPEG poster becomes a 104 × 59
+  WebP of 1.8 KB in 63–84 ms (the first one; a 1920 × 1080 JPEG of 500 KB then takes 13–19 ms).
+  `createImageBitmap` with `resizeWidth`/`resizeHeight` works too, no faster. `convertToBlob` on a
+  canvas without a context throws `InvalidStateError`.
+- **The page's HTTP cache is not shared**: after the page loaded a cacheable picture
+  (`max-age=3600`, same site or another site), the worker's `fetch` of the same URL went to the
+  server again, with default `cache` and with `force-cache`. The extension has its own cache (a
+  second worker fetch of a URL is served from it), which the page does not use either. So every
+  background picture is one more real request to the site: the PRIVACY.md line is needed.
+- **Cookies**: a worker `fetch` with default credentials (`same-origin`) to a site the extension
+  has host permission for **sends the site's cookies** (as `include` does); only `credentials:
+  'omit'` sends none. No Referer and no Origin on these GETs. The background fetch must set
+  `credentials: 'omit'` (the 1.2.0 picture fetch in the offscreen document already does).
+- **`priority: 'low'`**: accepted by `fetch` in the worker; CDP shows `initialPriority` `Low`
+  (default and `high`: `High`). `Request` has no readable `priority` property, so it cannot be
+  checked from code: pass it and do not test for it.
+- **`playing` listener** (one capture listener on `document` in the content script, run at
+  `document_idle`, every frame): sees a same-site file, an MSE player and a player in a frame from
+  another site (that frame's own content script); the frame 1.5 s later is a 1.7–1.9 KB WebP in
+  5–10 ms (35 ms the first time). A locked cross-site file throws `SecurityError` as before. It
+  does **not** see a `<video>` in a shadow root, open or closed (`playing` is not composed), and
+  neither does today's `querySelectorAll('video')`. It fires again after a pause (keep one frame
+  per element and src), and fires in a **background tab** (`visibilityState` `hidden`), so the
+  hidden-tab check must be the script's own. In these pages the script ran before autoplay
+  started; a video already playing at injection (a slow page) is missed by the listener, so the
+  script also looks once at the videos playing when it starts.
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

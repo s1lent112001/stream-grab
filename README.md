@@ -135,6 +135,9 @@ Serves a test site bound to 127.0.0.1, with these pages:
   (127.0.0.1 ↔ localhost, so the page cannot read its frame), HLS fMP4 and DASH (a frame from one
   segment), HLS MPEG-TS (the icon), a `VideoObject` `thumbnailUrl`, a video page's `og:image`, and
   an article's `og:image` (not used: the icon). Open the popup on each to see its tile.
+  `/previews/timing/a`, `/d` and `/many` (1.2.4) are the extra pages of the opt-in preview timing
+  harness (`tests/e2e/preview-timing.e2e.ts`): a playing video with a poster, an MP4 from the other
+  host not played, and a page of eight videos, two of them on a slow server.
 - <http://localhost:5180/live>: **a live channel next to a replay** (0.4.0). The page requests a
   VOD once and a live playlist 30 times with a changing LL-HLS query; only the VOD is listed and
   the badge stays at 1.

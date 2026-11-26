@@ -20,6 +20,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.2.1 | Fix: after Back/Forward, on single-page sites and on sites whose service worker loads their pages, the list showed videos of other pages. Released 2026-11-24 |
 | v1.2.2 | Junk filter hides a page's grid of previews (no length threshold); hidden videos in a folded section after the list. Released 2026-11-24 |
 | v1.2.3 | Fix: a video stayed "Inspecting…" while a download from the same server, for another page, held its Referer rule (v1.4.0 Phase 1 item, done early). 2026-11-26 |
+| v1.2.4 | Faster previews: popup lanes, pictures made before the popup opens, the frame of a video as it plays (below) |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | Optimisation and bug fixes, no new feature (below); replaces the UI redesign (dropped 2026-11-24) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
@@ -349,6 +350,52 @@ Phases (one session each, checks and e2e at the end of each):
    the icon without H.264); every source made its picture in a real browser, no maker needed a fix.
 4. Regression, docs (CHANGELOG, README, SPEC, PRIVACY), version 1.2.0, ZIP, GitHub Release, listing
    draft line (GitHub only; no store upload until v1.5.0). **Done 2026-11-23.**
+
+**v1.2.4: faster previews** (agreed 2026-11-26, GitHub only). Previews are made only when the
+popup shows a tile, sources are tried one after another (a poster is fetched through the
+offscreen document before the free player frame), and two slots serve both the cheap sources and
+the frame makers (up to 8 s each), so two slow videos hold back every other tile. Goal: most tiles
+show their picture as the popup opens, with no cost to browsing. No new permission.
+
+- **Idea 3, popup lanes:** a cheap lane (player frame, poster, page picture; 3–4 at a time) and a
+  heavy lane (file and segment frames; 1–2 at a time), so slow frames never hold back cheap tiles;
+  the offscreen document is created as soon as a visible tile needs the heavy lane, alongside the
+  cheap work; the player frame comes first when the video shows a picture.
+- **Idea 2, pictures before the popup opens:** when a listed (not hidden) video is ready and has no
+  cached picture, the service worker fetches its poster or page picture, one at a time, low
+  priority, after the page has loaded, at most about 10 per page, and shrinks it itself
+  (`createImageBitmap` + `OffscreenCanvas`, no offscreen document). No DNR rule: such a request
+  goes out without cookies or Referer, and a refused one is left to the popup (a rule change
+  clears the back/forward cache in every tab). The extension's HTTP cache is not the page's (it is
+  partitioned), so each is a real request: one PRIVACY.md line. Frame makers never run in the
+  background.
+- **Idea 1, the frame of a video as it plays:** the content script listens for `playing` (one
+  capture listener per document), takes one frame per `<video>` and src after 1–2 s of playback,
+  when idle, at most about 5 per page and never in a hidden tab, and sends it to the service
+  worker, which matches it to the listed video by the `playingVideo` rules (held in memory per tab
+  until the video is listed, dropped on navigation). Locked canvases (cross-site files without
+  CORS, DRM) are skipped as today.
+
+Phases (one session each, measured before and after):
+
+1. **Measure and spikes** (Opus high). An e2e timing harness: popup open → picture, per case (A
+   playing with a poster, B playing without, C not played with a poster, D MP4 frame, E HLS/DASH
+   fMP4 frame, F MPEG-TS or a locked cross-site file), one and several videos, as a baseline.
+   Spikes in Chrome for Testing newest and 116: WebP from `OffscreenCanvas.convertToBlob` in the
+   service worker; whether an extension fetch reuses the page's HTTP cache; `fetch` `priority:
+   'low'` in the worker; a `playing` capture listener on `document` sees MSE and iframe players.
+   **Done 2026-11-26** (ARCHITECTURE "Version 1.2.4"): the shared limiter is the largest delay (a
+   quick tile 4.8 s behind two slow ones, else 0.3–0.9 s); poster-first costs ~220 ms on a playing
+   video; tiles below the fold get nothing. WebP, `priority: 'low'` and the `playing` listener
+   work in 116 and 157; the page's HTTP cache is not shared; a worker fetch sends the site's
+   cookies unless `credentials: 'omit'`; `playing` misses shadow-root videos and fires in hidden
+   tabs.
+2. **Idea 3** (lanes, warm offscreen document, order), unit tests, e2e, measure.
+3. **Idea 2** (background pictures in the service worker, caps, no rule), PRIVACY.md, e2e, measure.
+4. **Idea 1** (capture on play, matching and holding), e2e for an SPA, an iframe player, an ad
+   slot and a page of autoplay previews (the cap), measure.
+5. **Release** (Sonnet low): regression on the newest Chrome and 116, CHANGELOG, README, version
+   1.2.4, ZIP, GitHub Release.
 
 **v1.3.0: tab recording.** "Record this tab" saves what the tab plays, for live streams and for
 players that hide their segment addresses. `chrome.tabCapture` + `MediaRecorder` in the offscreen
