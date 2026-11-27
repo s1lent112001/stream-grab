@@ -7,6 +7,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-11-27
+
+### Changed
+
+- Previews show faster. The popup makes the cheap pictures (the player's frame, a poster, a page
+  picture) in their own lane, so a slow video's frame never holds them back, and it starts its
+  hidden helper page early. A video that has played shows its player frame first.
+- Posters and page pictures of listed videos are fetched in the background after the page has
+  loaded (one at a time, at most about 10 a page, low priority, without cookies or Referer), so
+  most tiles already have their picture when the popup opens. A refused one is left to the popup.
+- A frame of a video is kept as it plays (after about 1.5 seconds, when the page is idle, at most
+  5 a page, never in a hidden tab), so a video you watched has its picture at once.
+
+### Notes
+
+- No new permissions. The background pictures are extra requests to the page's own servers; see
+  PRIVACY.md.
+
 ## [1.2.3] - 2026-11-26
 
 ### Fixed

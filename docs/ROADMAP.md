@@ -20,7 +20,7 @@ use. 1.0.0 means "stable and public", not a feature milestone.
 | v1.2.1 | Fix: after Back/Forward, on single-page sites and on sites whose service worker loads their pages, the list showed videos of other pages. Released 2026-11-24 |
 | v1.2.2 | Junk filter hides a page's grid of previews (no length threshold); hidden videos in a folded section after the list. Released 2026-11-24 |
 | v1.2.3 | Fix: a video stayed "Inspecting…" while a download from the same server, for another page, held its Referer rule (v1.4.0 Phase 1 item, done early). 2026-11-26 |
-| v1.2.4 | Faster previews: popup lanes, pictures made before the popup opens, the frame of a video as it plays (below) |
+| v1.2.4 | Faster previews: popup lanes, pictures made before the popup opens, the frame of a video as it plays (below). Released 2026-11-27 |
 | v1.3.0 | Tab recording for live streams and players that hide their segments (below) |
 | v1.4.0 | Optimisation and bug fixes, no new feature (below); replaces the UI redesign (dropped 2026-11-24) |
 | v1.5.0 | Translations (`_locales`) and a gentle rating prompt (below); the next store update |
@@ -409,7 +409,7 @@ Phases (one session each, measured before and after):
    until the stream is listed and drops frames of a page left. Playing cases 82 → 67 ms (from the
    cache); the rest unchanged.
 5. **Release** (Sonnet low): regression on the newest Chrome and 116, CHANGELOG, README, version
-   1.2.4, ZIP, GitHub Release.
+   1.2.4, ZIP, GitHub Release. **Done 2026-11-27.**
 
 **v1.3.0: tab recording.** "Record this tab" saves what the tab plays, for live streams and for
 players that hide their segment addresses. `chrome.tabCapture` + `MediaRecorder` in the offscreen
