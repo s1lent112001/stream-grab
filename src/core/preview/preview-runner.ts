@@ -56,7 +56,8 @@ export interface PreviewRunnerDeps {
 
 type Attempt = { image: PreviewImage } | { failure: 'failed' | 'retry' | 'cancelled' };
 
-function toBuffer(bytes: Uint8Array): ArrayBuffer {
+/** A copy of the bytes in an ArrayBuffer of their own (what the cache stores). */
+export function toBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;

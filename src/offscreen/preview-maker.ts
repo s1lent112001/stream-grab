@@ -4,7 +4,7 @@ import { SegmentFetcher, type SegmentRequest } from '@/core/download/segment-fet
 import type { MediaSegment } from '@/core/models/media-segment';
 import type { FetchFunction } from '@/core/network/manifest-fetcher';
 import { frameSegments, frameTime, looksLikeMpegTs, lowestVariant, mseType } from '@/core/preview/frame-segments';
-import { coverCrop, MAX_PICTURE_PIXELS, MAX_PREVIEW_BYTES, pictureDimensions, PREVIEW_QUALITY, PREVIEW_SIZE } from '@/core/preview/preview-image';
+import { pictureFromResponse, shrinkToPreview } from '@/core/preview/picture';
 import {
   PREVIEW_LEASE_WAIT_MS,
   previewTimeoutMs,
@@ -35,8 +35,6 @@ export interface PreviewMakerDeps {
   logger?: Logger;
 }
 
-/** A page picture larger than this is not decoded (bytes). */
-const MAX_PICTURE_BYTES = 8 * 1024 * 1024;
 /** A segment larger than this is not appended (bytes): the lowest quality is far smaller. */
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
 
@@ -47,9 +45,6 @@ class TransientError extends Error {}
 
 /** HTTP statuses worth trying again on a later popup open. */
 const isTransientStatus = (status: number): boolean => status === 408 || status === 429 || status >= 500;
-
-/** A picture of an unknown format (its size not readable from its header) is decoded only up to this size (bytes). */
-const MAX_UNKNOWN_PICTURE_BYTES = 1024 * 1024;
 
 function isTransient(error: unknown): boolean {
   if (error instanceof TransientError) return true;
@@ -108,27 +103,6 @@ function waitFor(target: HTMLMediaElement, events: readonly string[], signal: Ab
 
 function hasPicture(video: HTMLVideoElement): boolean {
   return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
-}
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
-  return `data:${blob.type};base64,${btoa(binary)}`;
-}
-
-/** Draws the centred square of a picture on a 104 × 104 canvas: a WebP (else JPEG) data URL. */
-async function shrink(source: CanvasImageSource, width: number, height: number): Promise<string> {
-  const canvas = new OffscreenCanvas(PREVIEW_SIZE, PREVIEW_SIZE);
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('No 2D canvas');
-  const crop = coverCrop(width, height);
-  context.drawImage(source, crop.x, crop.y, crop.width, crop.height, 0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
-  for (const type of ['image/webp', 'image/jpeg']) {
-    const blob = await canvas.convertToBlob({ type, quality: PREVIEW_QUALITY });
-    if (blob.type === type && blob.size > 0 && blob.size <= MAX_PREVIEW_BYTES) return blobToDataUrl(blob);
-  }
-  throw new Error('Could not encode the preview');
 }
 
 /** A muted, hidden `<video>` in the document; removed (and its download stopped) by `dispose`. */
@@ -224,23 +198,7 @@ export class PreviewMaker {
     // No cookies: posters and thumbnails are public, and the page chose this URL.
     const response = await this.#fetch(attempt)(url, { credentials: 'omit', cache: 'force-cache' });
     if (!response.ok) throw isTransientStatus(response.status) ? new TransientError(`HTTP ${response.status}`) : new Error(`HTTP ${response.status}`);
-    const declared = Number(response.headers.get('content-length') ?? '0');
-    if (declared > MAX_PICTURE_BYTES) throw new Error('The picture is too large');
-    const blob = await response.blob();
-    if (blob.size === 0 || blob.size > MAX_PICTURE_BYTES) throw new Error('The picture is empty or too large');
-    // Its size from the header first: decoding a small file of huge dimensions could exhaust the memory downloads share.
-    const size = pictureDimensions(new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer()));
-    if (size ? size.width * size.height > MAX_PICTURE_PIXELS : blob.size > MAX_UNKNOWN_PICTURE_BYTES) {
-      throw new Error('The picture is too large to decode');
-    }
-    // Decoding decides what an image is, not the Content-Type the server claims.
-    const bitmap = await createImageBitmap(blob);
-    try {
-      if (bitmap.width < 2 || bitmap.height < 2) throw new Error('The picture is a placeholder');
-      return await shrink(bitmap, bitmap.width, bitmap.height);
-    } finally {
-      bitmap.close();
-    }
+    return pictureFromResponse(response);
   }
 
   async #fileFrame(attempt: Attempt, url: string): Promise<string> {
@@ -255,7 +213,7 @@ export class PreviewMaker {
         await waitFor(video, ['seeked'], attempt.signal);
       }
       await waitFor(video, ['loadeddata', 'canplay', 'seeked'], attempt.signal, () => hasPicture(video));
-      return await shrink(video, video.videoWidth, video.videoHeight);
+      return await shrinkToPreview(video, video.videoWidth, video.videoHeight);
     } finally {
       dispose();
     }
@@ -356,7 +314,7 @@ export class PreviewMaker {
       // A little past the start: the first sample of a segment may begin just after the buffered start.
       video.currentTime = buffer.buffered.start(0) + 0.05;
       await waitFor(video, ['seeked', 'loadeddata', 'canplay'], attempt.signal, () => hasPicture(video));
-      return await shrink(video, video.videoWidth, video.videoHeight);
+      return await shrinkToPreview(video, video.videoWidth, video.videoHeight);
     } finally {
       dispose();
       URL.revokeObjectURL(objectUrl);

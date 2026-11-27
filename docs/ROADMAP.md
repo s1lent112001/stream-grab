@@ -396,6 +396,11 @@ Phases (one session each, measured before and after):
    that has played. A playing video with a poster 302 → 88 ms; a poster tile beside two slow
    streams 4.1 s → 0.3 s; a quick HLS frame beside two slow ones still waits for the heavy lane.
 3. **Idea 2** (background pictures in the service worker, caps, no rule), PRIVACY.md, e2e, measure.
+   **Done 2026-11-27** (ARCHITECTURE "Pictures before the popup opens"): one picture at a time,
+   after the tab loaded, at most 10 requests a page and one a video for the tab's life (session
+   storage); no cookies, no Referer, `no-store`; waits while another page's header rule holds the
+   host; a refused picture is left to the popup. The `many` page's poster tile 301 → 78 ms, its
+   posters below the fold cached too; single-video cases unchanged.
 4. **Idea 1** (capture on play, matching and holding), e2e for an SPA, an iframe player, an ad
    slot and a page of autoplay previews (the cap), measure.
 5. **Release** (Sonnet low): regression on the newest Chrome and 116, CHANGELOG, README, version

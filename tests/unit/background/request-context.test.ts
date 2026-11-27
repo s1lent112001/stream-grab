@@ -48,6 +48,45 @@ describe('pickRequestContext', () => {
 });
 
 describe('RequestContextRules', () => {
+  it('tells whether a rule of another context would change a request for a URL: its host, a subdomain, or that very URL (1.2.4)', async () => {
+    const rules = new RequestContextRules(new FakeRulesApi(), EXTENSION_ID);
+    const other = { referer: 'https://other.example/' };
+    expect(rules.appliesTo('https://example.com/p.jpg', other)).toBe(false);
+    const releaseHost = await rules.acquire('https://example.com/a.m3u8', referer);
+    expect(rules.appliesTo('https://example.com/p.jpg', other)).toBe(true);
+    expect(rules.appliesTo('https://img.example.com/p.jpg', other)).toBe(true);
+    expect(rules.appliesTo('https://notexample.com/p.jpg', other)).toBe(false);
+    expect(rules.appliesTo('not a url', other)).toBe(false);
+    // Its own page's rule sets what the page itself sends.
+    expect(rules.appliesTo('https://example.com/p.jpg', referer)).toBe(false);
+    await releaseHost();
+    expect(rules.appliesTo('https://example.com/p.jpg', other)).toBe(false);
+    // A one-URL rule beside another context's host rule decides that URL alone.
+    const releaseOther = await rules.acquire('https://cdn.example/a.mp4', other);
+    const releaseUrl = await rules.acquire('https://cdn.example/b.jpg', referer, { oneUrl: true });
+    expect(rules.appliesTo('https://cdn.example/b.jpg', referer)).toBe(false);
+    expect(rules.appliesTo('https://cdn.example/b.jpg', other)).toBe(true);
+    expect(rules.appliesTo('https://cdn.example/c.jpg', referer)).toBe(true);
+    await releaseOther();
+    await releaseUrl();
+    expect(rules.appliesTo('https://cdn.example/b.jpg', other)).toBe(false);
+
+    // A rule let go still applies until Chrome has removed it.
+    const slow = new FakeRulesApi();
+    const slowRules = new RequestContextRules(slow, EXTENSION_ID);
+    const release = await slowRules.acquire('https://example.com/a.m3u8', referer);
+    let finish: () => void = () => undefined;
+    slow.updateSessionRules = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    const releasing = release();
+    expect(slowRules.appliesTo('https://example.com/p.jpg', other)).toBe(true);
+    finish();
+    await releasing;
+    expect(slowRules.appliesTo('https://example.com/p.jpg', other)).toBe(false);
+  });
+
   it('removes rules left by a previous worker instance on initialisation', async () => {
     const api = new FakeRulesApi();
     api.rules.set(7, { id: 7, action: { type: 'block' }, condition: {} });

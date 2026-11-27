@@ -5,7 +5,7 @@ import { inspectProgressiveFile } from '@/core/detection/file-inspector';
 import { listedStreams } from '@/core/detection/junk-filter';
 import { inspectStream } from '@/core/detection/stream-inspector';
 import { inspectSubtitleFile } from '@/core/detection/subtitle-inspector';
-import type { RequestContext } from '@/core/models/detected-stream';
+import type { DetectedStream, RequestContext } from '@/core/models/detected-stream';
 import { ManifestFetcher } from '@/core/network/manifest-fetcher';
 import { DashAdapter } from '@/core/protocols/dash/dash-adapter';
 import { HlsAdapter } from '@/core/protocols/hls/hls-adapter';
@@ -33,12 +33,17 @@ export interface DetectionService {
 
 const log = createLogger('detection');
 
+export interface DetectionServiceOptions {
+  /** A tab's list changed: the videos it shows (hidden ones left out), e.g. for pictures made before the popup opens (1.2.4). */
+  onListChanged?(tabId: number, listed: readonly DetectedStream[]): void;
+}
+
 /**
  * Composition root of stream detection in the service worker. Must be called
  * synchronously at startup: it registers the webRequest and tabs listeners
  * that Chrome uses to wake a suspended worker.
  */
-export function startDetectionService(): DetectionService {
+export function startDetectionService(options: DetectionServiceOptions = {}): DetectionService {
   const rules = new RequestContextRules(chrome.declarativeNetRequest, chrome.runtime.id);
   rules.initialize().catch((error: unknown) => {
     log.warn('Could not reset request-context rules', { error: errorMessage(error) });
@@ -70,7 +75,9 @@ export function startDetectionService(): DetectionService {
       delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     }),
     onTabChanged: (tabId, streams) => {
-      updateBadge(tabId, listedStreams(streams, hideJunk).length);
+      const listed = listedStreams(streams, hideJunk);
+      updateBadge(tabId, listed.length);
+      options.onListChanged?.(tabId, listed);
     },
     logger: log,
   });

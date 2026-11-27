@@ -20,6 +20,12 @@
  * - `video-og`:     a TS stream on a page whose `og:type` is `video.other`, with `og:image`;
  * - `article-og`:   a TS stream on an article page with `og:image`: never used (pictures the page).
  *
+ * `background/open`, `background/guarded` (1.2.4, not cases above): a video with a poster, not
+ * played, on a page that sets a cookie; the open poster is served to anyone, the guarded one answers
+ * 403 without a /previews page as Referer: the service worker makes the first before the popup
+ * opens (without cookies or Referer) and leaves the second to the popup. One video a page: two
+ * short clips on one page are hidden as junk.
+ *
  * Pages of the preview timing harness (1.2.4) live below /previews/timing/ (preview-timing-routes.ts).
  *
  * Without H.264 (Chrome for Testing 116) the pages that play a file or MSE play WebM instead and
@@ -63,6 +69,14 @@ export interface PreviewCase {
 const page = (name: PreviewCaseName) => `${PREVIEW_PAGE_PREFIX}${name}`;
 /** The picture a page names (poster, thumbnailUrl, og:image). */
 export const previewPicturePath = (name: PreviewCaseName) => `${PREVIEW_PAGE_PREFIX}pictures/${name}.jpg`;
+
+/** Pages of pictures made before the popup opens (1.2.4). */
+export const BACKGROUND_PAGE = `${PREVIEW_PAGE_PREFIX}background`;
+export type BackgroundVideo = 'open' | 'guarded';
+export const backgroundPagePath = (video: BackgroundVideo) => `${BACKGROUND_PAGE}/${video}`;
+export const backgroundPosterPath = (video: BackgroundVideo) => `${BACKGROUND_PAGE}/${video}.jpg`;
+/** The cookie the page sets: the page's own requests carry it, background pictures must not. */
+export const BACKGROUND_COOKIE = 'sg-session=fixture';
 
 export const PREVIEW_CASES: readonly PreviewCase[] = [
   { name: 'poster', path: page('poster'), stream: `${page('poster')}/clip.mp4`, expected: 'poster', note: 'A video with a poster, not playing.' },
@@ -237,6 +251,20 @@ video.addEventListener('timeupdate', () => {
   }
 }
 
+function backgroundPage(name: BackgroundVideo): string {
+  return html(
+    `Preview: a picture before the popup opens (${name})`,
+    `<p>A video with a poster; open the popup after a few seconds: the tile shows its picture at once.</p>
+<video id="v" title="Background ${name}" poster="${backgroundPosterPath(name)}" preload="metadata" muted controls width="320"></video>
+<script>${H264}
+document.cookie = '${BACKGROUND_COOKIE}; path=/';
+const src = '${backgroundPagePath(name)}/clip.' + (h264 ? 'mp4' : 'webm');
+document.getElementById('v').src = src;
+document.body.dataset.stream = src;
+</script>`,
+  );
+}
+
 function indexPage(): string {
   const items = PREVIEW_CASES.map((item) => `<li><a href="${item.path}">${item.name}</a>: ${item.note}</li>`).join('\n');
   return html('StreamGrab previews', `<p>One page per source of a preview picture (1.2.0).</p><ul>${items}</ul>`);
@@ -283,6 +311,13 @@ export function createPreviewRouter(
   return (pathname, request = {}) => {
     if (pathname === '/previews' || pathname === PREVIEW_PAGE_PREFIX) return ok(HTML, indexPage());
     if (pathname.startsWith(PREVIEW_TIMING_PREFIX)) return timing(pathname, request);
+    if (pathname === backgroundPagePath('open') || pathname === backgroundPagePath('guarded')) {
+      return ok(HTML, backgroundPage(pathname === backgroundPagePath('open') ? 'open' : 'guarded'));
+    }
+    if (pathname === backgroundPosterPath('open')) return ok('image/jpeg', files.picture);
+    if (pathname === backgroundPosterPath('guarded')) {
+      return hasLocalReferer(request.referer, PREVIEW_PAGE_PREFIX) ? ok('image/jpeg', files.picture) : forbidden;
+    }
     const caseOf = (name: string | undefined) => PREVIEW_CASES.find((candidate) => candidate.name === name)?.name;
 
     const pageMatch = /^\/previews\/([\w-]+)$/.exec(pathname);
@@ -292,7 +327,7 @@ export function createPreviewRouter(
     const picture = /^\/previews\/pictures\/([\w-]+)\.jpg$/.exec(pathname);
     if (picture && caseOf(picture[1])) return hasLocalReferer(request.referer, PREVIEW_PAGE_PREFIX) ? ok('image/jpeg', files.picture) : forbidden;
 
-    const file = /^\/previews\/(poster|file|player)\/clip\.(mp4|webm)$/.exec(pathname);
+    const file = /^\/previews\/(poster|file|player|background\/open|background\/guarded)\/clip\.(mp4|webm)$/.exec(pathname);
     if (file) {
       // The cross-site file: its page's Referer is the page's origin only (strict-origin-when-cross-origin).
       if (file[1] === 'file' && !hasLocalReferer(request.referer)) return forbidden;

@@ -108,6 +108,8 @@ export class RequestContextRules {
   readonly #hosts = new Map<string, SharedRule>();
   /** One-URL rules, by urlFilter. */
   readonly #urls = new Map<string, SharedRule>();
+  /** Rules let go whose removal Chrome has not finished: they still change requests (`appliesTo`). */
+  readonly #removing = new Map<SharedRule, { slot: string; oneUrl: boolean }>();
   #nextRuleId = 1;
   #ready: Promise<void> | undefined;
 
@@ -181,6 +183,32 @@ export class RequestContextRules {
       }
       return release;
     }
+  }
+
+  /**
+   * Whether a rule (installed or being installed) of a context other than `own` would change the
+   * extension's own request for `url` now: one for its host or a parent domain of it
+   * (`requestDomains` matches subdomains), or one for this very URL. Read only: background pictures
+   * (1.2.4) wait rather than carry another page's Referer; a rule of their own page's context (its
+   * videos being checked) sets what the page itself sends.
+   */
+  appliesTo(url: string, own: RequestContext): boolean {
+    const parsed = parseHttpUrl(url);
+    if (!parsed) return false;
+    const key = requestContextKey(own);
+    const filter = exactUrlFilter(parsed);
+    const host = parsed.hostname;
+    const onHost = (ruled: string) => host === ruled || host.endsWith(`.${ruled}`);
+    // Rules being removed still apply until Chrome has removed them: they count as held.
+    const removing = [...this.#removing].filter(([entry, { slot, oneUrl }]) => entry.key !== key && (oneUrl ? slot === filter : onHost(slot)));
+    if (removing.length > 0) return true;
+    const exact = filter === undefined ? undefined : this.#urls.get(filter);
+    // A one-URL rule outranks the host's: it alone decides this request's headers.
+    if (exact) return exact.key !== key;
+    for (const [ruled, entry] of this.#hosts) {
+      if (onHost(ruled) && entry.key !== key) return true;
+    }
+    return false;
   }
 
   /** Number of hosts with an active rule (diagnostics and tests). */
@@ -261,9 +289,11 @@ export class RequestContextRules {
       entry.refs -= 1;
       if (entry.refs > 0) return;
       slots.delete(slot);
+      this.#removing.set(entry, { slot, oneUrl: slots === this.#urls });
       try {
         await this.#api.updateSessionRules({ removeRuleIds: [entry.ruleId] });
       } finally {
+        this.#removing.delete(entry);
         entry.markRemoved();
       }
     };

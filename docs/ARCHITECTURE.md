@@ -1697,6 +1697,68 @@ HLS stream still 4710 ms, as it needs the heavy lane both slow streams hold. The
 was still never open when the popup opened: it is created as the popup asks, not before (Phase 3
 makes pictures before the popup opens).
 
+### Pictures before the popup opens (Phase 3)
+
+- **What** (`core/preview/background-previews.ts`, made in `service-worker.ts`): when a tab's list
+  changes, the detection service hands the videos it shows (`onListChanged`, hidden ones left out)
+  to `BackgroundPreviews`. A ready video it has not seen on that tab is queued; the queue is worked
+  one video at a time for all tabs, and only once the tab's page has loaded (`chrome.tabs.get`
+  status `complete`, looked at again every second, given up 60 s after it was queued; no
+  `tabs.onUpdated` listener, which would wake the worker for every tab). For each video: skip it if a popup is
+  making its preview (`PreviewHost.isMaking`), if the cache has its picture, if it is no longer
+  listed or ready; ask its frame (and the top frame) for metadata and build the same source list as
+  the popup (`previewSources`). A video that has played and shows a picture is left to the popup,
+  which takes that frame for nothing. Otherwise the first poster or page picture a cached failure
+  has not tried is fetched, and its preview cached as `ready` with that source. Frames made from
+  the video (file, segments) are never made here.
+- **Cost caps**: one request a video and at most 10 requests a page (`BACKGROUND_PER_PAGE`, counted
+  per page URL, so a single-page site's next page has its own) for the tab's life: what each tab
+  had (videos decided, requests per page) is kept in session storage (`backgroundPictures:<tab>`),
+  so a worker woken again after its idle timeout does not ask again, nor does a page visited
+  again. A video counts as decided once its page has answered (a request made, or none to make);
+  one dropped before that (its tab still loading, a worker stopped meanwhile) is queued again on
+  the next change of the list. At most 100 videos waiting. A tab whose list empties (a new page) drops what it queued; a
+  closed tab drops everything and its record. A video skipped without a request (cached, played,
+  no picture) costs nothing.
+- **The request**: in the service worker, `fetch` with `credentials: 'omit'` (a worker fetch sends
+  the site's cookies by default), `referrerPolicy: 'no-referrer'`, `priority: 'low'`, 5 s; no
+  header rule of its own (a DNR rule change clears the back/forward cache of every tab). A rule
+  held for the picture's host (or a parent domain, or that URL) sets its Referer and Origin on
+  this request too (`set` wins over `no-referrer`). A rule of another page's context (a download,
+  a preview) would send that page's address, so the picture waits while
+  `RequestContextRules.appliesTo(url, stream context)` says one applies: looked at again every 5 s
+  without asking the page, dropped after 60 s. A rule of the video's own context (its page's
+  streams being inspected, common while the page loads) sets what the page itself sends and does
+  not hold the picture back: waiting for it held every poster of the timing harness's `many` page
+  past the popup's opening. A rule being removed counts until Chrome has removed it. Redirects
+  are not followed (`redirect: 'manual'`): the new host is not checked, so a redirected picture
+  is left to the popup. `cache: 'no-store'`: the service worker and the offscreen document
+  share the extension's HTTP cache, and a 403 kept from this request (no Referer) must not be what
+  the popup's retry with the Referer reads; the page's own cached copy is in another partition
+  anyway. The picture code (`core/preview/picture.ts`: size checks, `createImageBitmap`,
+  `OffscreenCanvas` to a 104 × 104 WebP) is shared with the offscreen document's picture maker. A
+  refused request (a server that wants the page's Referer), a failure or a timeout caches nothing:
+  the popup tries the same source again with its rule. `docs/PRIVACY.md` says so. A server that
+  answers a request without Referer with a 200 "no hotlinking" picture gets that picture cached:
+  a known limit.
+- **With the popup**: the popup reads the cache first, so a picture made before it opens shows with
+  no question to the service worker. A tile that asks while its picture is being made waits for it
+  (`PreviewHost` `backgroundPending`, bounded by the popup's port) and then finds it in the cache;
+  a picture the popup is making is never fetched in the background.
+- **End-to-end** (`/previews/background/open` and `/guarded`, one video each, a cookie set by the
+  page): the open poster is made without any ask, by one request without cookie or Referer, and the
+  popup's ask is answered from the cache; the guarded poster (403 without Referer) is tried once in
+  the background, nothing is cached, and the popup makes it with the page's Referer.
+
+**Measured** (timing harness, Chrome for Testing 157, median of 3, same settings; reports
+`.cache/timing/phase3-157.json`, `phase3b-157.json`): the poster tile of the `many` page 301 → 78
+ms (from the cache: its picture is made in the 2 s before the popup opens), and the posters below
+the fold are cached too, so they show as soon as they are scrolled to. The single-video cases are
+unchanged within the run-to-run noise (±50 ms): C's poster answers 403 without Referer, so it is
+still made by the popup, and the others have no poster. The quick HLS tile beside two slow ones
+still waits for the heavy lane (~4.7 s; 0.9 s in a run where the list put it first). The
+offscreen document is still never open when the popup opens.
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

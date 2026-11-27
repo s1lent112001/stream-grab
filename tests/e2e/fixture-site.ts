@@ -15,8 +15,8 @@ const fixtures = resolve(import.meta.dirname, '..');
 export interface FixtureSite {
   /** http://127.0.0.1:<port> */
   origin: string;
-  /** Paths requested, in order, with the Referer (and Range, If-Range) each request carried. */
-  requests: { path: string; referer: string | undefined; range?: string | undefined; ifRange?: string | undefined }[];
+  /** Paths requested, in order, with the Referer (and Range, If-Range, Cookie) each request carried. */
+  requests: { path: string; referer: string | undefined; range?: string | undefined; ifRange?: string | undefined; cookie?: string }[];
   close(): Promise<void>;
 }
 
@@ -41,7 +41,14 @@ export async function startFixtureSite(options: { latencyMs: number; /** Added t
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const ifRange = req.headers['if-range']?.toString();
-    requests.push({ path: url.pathname, referer: req.headers.referer, range: req.headers.range, ...(ifRange !== undefined ? { ifRange } : {}) });
+    const cookie = req.headers.cookie;
+    requests.push({
+      path: url.pathname,
+      referer: req.headers.referer,
+      range: req.headers.range,
+      ...(ifRange !== undefined ? { ifRange } : {}),
+      ...(cookie !== undefined ? { cookie } : {}),
+    });
     const response = route(url.pathname, { referer: req.headers.referer, range: req.headers.range, ifRange });
     if (options.previewLatencyMs && url.pathname.startsWith('/previews/')) response.delayMs = (response.delayMs ?? 0) + options.previewLatencyMs;
     sendResponse(res, response);

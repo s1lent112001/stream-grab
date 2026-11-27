@@ -1,6 +1,6 @@
 # StreamGrab privacy policy
 
-Last updated: 23 November 2026 (StreamGrab 1.2.1)
+Last updated: 27 November 2026 (StreamGrab 1.2.4)
 
 StreamGrab is a browser extension that saves the videos a web page plays. It runs entirely in
 your browser. It has no server, no account and no analytics, and **it does not collect, sell or
@@ -47,7 +47,12 @@ manifest, the first bytes of a video file or a subtitle file, so the video can b
 picture the page gives for a video or a small part of the video to draw its preview (opening
 the popup may do this), and to download the videos you pick. These requests carry the page's Referer and Origin and the
 browser's own cookies for that site, as the page's player does, so the site serves them as it
-does to its own player. Nothing about you or your browsing is sent to the developer or to any
+does to its own player. One exception: so that previews show as soon as you open the popup, once
+a page has loaded StreamGrab may fetch the poster or picture the page gives for a few of its
+videos (at most about ten a page, one at a time) before you open the popup; these requests go
+to the address the page names, without cookies, and without Referer or Origin unless StreamGrab
+is checking that same page's videos on that server at the moment (then they carry that page's
+address, as the page's own request does). Nothing about you or your browsing is sent to the developer or to any
 third party.
 
 The links in the popup (source code, Report a problem, What's new, Ko-fi) open in a new tab only

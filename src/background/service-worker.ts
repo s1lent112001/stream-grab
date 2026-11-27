@@ -18,6 +18,8 @@ import { TaskStore } from '@/core/download/task-store';
 import { OpfsOutputFiles } from '@/core/media/output-files';
 import { PARTIAL_DIRECTORY } from '@/core/download/partial-files';
 import { listedStreams } from '@/core/detection/junk-filter';
+import { BackgroundPreviews, parseBackgroundTabRecord } from '@/core/preview/background-previews';
+import { pictureFromResponse } from '@/core/preview/picture';
 import { IndexedDbPreviewCache } from '@/core/preview/preview-cache';
 import { sendToContent, sendToOffscreen } from '@/shared/messaging/client';
 import { parseFrameMetadata } from '@/shared/types/page-metadata';
@@ -41,7 +43,12 @@ self.addEventListener('unhandledrejection', (event) => {
   log.error('Unhandled error', { error: errorMessage(event.reason) });
 });
 
-const detection = startDetectionService();
+const detection = startDetectionService({
+  // Called after startup, once a tab's list is saved: `background` exists by then.
+  onListChanged: (tabId, listed) => {
+    background.listChanged(tabId, listed);
+  },
+});
 const taskStore = new TaskStore(chrome.storage.local, chrome.storage.session);
 const getStream = (tabId: number, streamId: string) => detection.manager.getStream(tabId, streamId);
 /** The same video in any open tab (tab IDs change after a browser restart; stream IDs do not). */
@@ -87,22 +94,69 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+const previewCache = new IndexedDbPreviewCache();
+const frameMetadata = async (tabId: number, frameId: number) => {
+  try {
+    return parseFrameMetadata(await withTimeout(sendToContent(tabId, frameId, 'content/getMetadata'), CONTENT_TIMEOUT_MS));
+  } catch {
+    return null;
+  }
+};
+const videosOnPage = async (tabId: number) =>
+  listedStreams(await detection.manager.getStreams(tabId), (await getSettingsStore().load()).hideJunk).length;
+
+// Pictures made before the popup opens (1.2.4): posters and page pictures of listed videos, one at a time.
+const backgroundKey = (tabId: number) => `backgroundPictures:${tabId}`;
+const background: BackgroundPreviews = new BackgroundPreviews({
+  cache: previewCache,
+  // What each tab had, for its life: a restarted worker does not ask for the same pictures again.
+  store: {
+    load: async (tabId) => parseBackgroundTabRecord((await chrome.storage.session.get(backgroundKey(tabId)))[backgroundKey(tabId)]),
+    save: (tabId, record) => chrome.storage.session.set({ [backgroundKey(tabId)]: record }),
+    remove: (tabId) => chrome.storage.session.remove(backgroundKey(tabId)),
+  },
+  listedStream: async (tabId, streamId) => {
+    const stream = await getStream(tabId, streamId).catch(() => undefined);
+    if (!stream) return undefined;
+    return listedStreams([stream], (await getSettingsStore().load()).hideJunk)[0];
+  },
+  frameMetadata,
+  videosOnPage,
+  tabState: async (tabId) => {
+    try {
+      return (await chrome.tabs.get(tabId)).status === 'complete' ? 'loaded' : 'loading';
+    } catch {
+      return 'gone';
+    }
+  },
+  busy: (streamId) => previews.isMaking(streamId),
+  ruleApplies: (url, own) => detection.rules.appliesTo(url, own),
+  picture: async (url, signal) => {
+    // No cookies, no Referer, behind the page's own requests. `no-store`: an answer refused for want of
+    // a Referer must not be what the popup's own request (with the Referer) reads from the cache.
+    // `manual`: a redirect to another host is not checked for header rules: it is left to the popup.
+    const response = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer', priority: 'low', cache: 'no-store', redirect: 'manual', signal });
+    if (response.type === 'opaqueredirect') throw new Error('Redirected');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return pictureFromResponse(response);
+  },
+  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  logger: log,
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  background.dropTab(tabId);
+});
+
 // Previews (1.2.0): asked by the open popup over a port, made by the content script or the offscreen document.
-const previews = new PreviewHost({
-  cache: new IndexedDbPreviewCache(),
+const previews: PreviewHost = new PreviewHost({
+  cache: previewCache,
   // Cheap sources (player frame, poster, page picture) never wait behind frames made from the video (1.2.4).
   lanes: { cheap: createLimiter(4), heavy: createLimiter(2) },
   findStream: async (streamId, tabId) =>
     (tabId === undefined ? undefined : await getStream(tabId, streamId).catch(() => undefined)) ?? (await findStreams(streamId))[0],
-  frameMetadata: async (tabId, frameId) => {
-    try {
-      return parseFrameMetadata(await withTimeout(sendToContent(tabId, frameId, 'content/getMetadata'), CONTENT_TIMEOUT_MS));
-    } catch {
-      return null;
-    }
-  },
-  videosOnPage: async (tabId) =>
-    listedStreams(await detection.manager.getStreams(tabId), (await getSettingsStore().load()).hideJunk).length,
+  frameMetadata,
+  videosOnPage,
   // A page stuck in a loop (or paused in DevTools) never answers: it must not hold a preview slot.
   playerFrame: (tabId, frameId, request) => withTimeout(sendToContent(tabId, frameId, 'content/getPlayerFrame', request), CONTENT_TIMEOUT_MS),
   acquireContext: (url, context) => detection.rules.acquire(url, context),
@@ -116,6 +170,7 @@ const previews = new PreviewHost({
   sendCancel: async (previewIds) => {
     await sendToOffscreen('preview/cancel', { previewIds });
   },
+  backgroundPending: (streamId) => background.pending(streamId),
   keptStreamIds: async () => new Set((await taskStore.list()).map((task) => task.source.streamId)),
   extensionOrigin: chrome.runtime.getURL(''),
   now: () => Date.now(),

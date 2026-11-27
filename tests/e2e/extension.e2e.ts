@@ -18,7 +18,15 @@ import { NodeFfmpegRunner } from '@tests/fakes/ffmpeg-node';
 import { DEMO_MEDIA, SIDECAR_CUE_SHIFT_SEC, SIDECAR_SUBTITLE_PATH } from '@tests/fixtures/download-routes';
 import { LIVE_PAGE_PATH, LIVE_PATH, LIVE_RELOADS, LIVE_VOD_PATH } from '@tests/fixtures/fixture-routes';
 import { syntheticFiles } from '@tests/fixtures/media/synthetic-files';
-import { PREVIEW_CASES, previewPicturePath, type PreviewCaseName } from '@tests/fixtures/preview-routes';
+import {
+  BACKGROUND_COOKIE,
+  backgroundPagePath,
+  backgroundPosterPath,
+  type BackgroundVideo,
+  PREVIEW_CASES,
+  previewPicturePath,
+  type PreviewCaseName,
+} from '@tests/fixtures/preview-routes';
 import {
   HISTORY_PLAIN_PATH,
   HISTORY_WATCH_PATH,
@@ -177,6 +185,36 @@ async function opfsFiles(page: Page, directory: string): Promise<string[]> {
 
 /** Files in the extension's OPFS merge directory. */
 const mergeFiles = (page: Page): Promise<string[]> => opfsFiles(page, MERGE_DIRECTORY);
+
+/** The preview cache's record of a stream (status and source only), read by an extension page. */
+async function cachedPreview(page: Page, streamId: string): Promise<{ status: unknown; source: unknown } | undefined> {
+  return page.evaluate(async (streamId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open('streamgrab-previews');
+      open.onsuccess = () => {
+        resolve(open.result);
+      };
+      open.onerror = () => {
+        reject(new Error(open.error?.message ?? 'open failed'));
+      };
+    });
+    try {
+      if (!db.objectStoreNames.contains('previews')) return undefined;
+      const record = await new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+        const get = db.transaction('previews', 'readonly').objectStore('previews').get(streamId);
+        get.onsuccess = () => {
+          resolve(get.result as Record<string, unknown> | undefined);
+        };
+        get.onerror = () => {
+          reject(new Error(get.error?.message ?? 'get failed'));
+        };
+      });
+      return record === undefined ? undefined : { status: record['status'], source: record['source'] };
+    } finally {
+      db.close();
+    }
+  }, streamId);
+}
 
 /** What the popup's tile does for a stream: asks the service worker over the preview port, then reads the cache. */
 async function askPreview(page: Page, tabId: number, streamId: string) {
@@ -1121,6 +1159,48 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
       await popup.close();
     }
     await posterTab.page.close();
+    await ext.close();
+  });
+
+  it('makes a poster picture before the popup opens, without cookies or Referer, and leaves a refused one to the popup (1.2.4)', async () => {
+    const ext = await extensionPage();
+    const background = (path: string) => site.requests.filter((entry) => entry.path === path && entry.referer === undefined);
+    const load = async (name: BackgroundVideo) => {
+      const pageUrl = `${site.origin}${backgroundPagePath(name)}`;
+      const page = await browser.newPage();
+      await page.goto(pageUrl);
+      const path = (await page.$eval('body', (body) => body.dataset['stream'])) ?? '';
+      const { tabId, streams } = await detected(ext, pageUrl, [path]);
+      const stream = streams[0];
+      if (!stream) throw new Error(`no stream on ${pageUrl}`);
+      return { page, tabId, stream };
+    };
+
+    // Nothing asked: the service worker makes the open poster's picture by itself.
+    const open = await load('open');
+    expect(await waitFor('the picture made in the background', async () => {
+      const record = await cachedPreview(ext, open.stream.id);
+      return record?.status === 'ready' ? record : undefined;
+    }, 30_000)).toEqual({ status: 'ready', source: 'poster' });
+    // One request, without the page's cookie (its own requests carry it) and without Referer.
+    expect(site.requests.some((entry) => entry.path.startsWith(backgroundPagePath('open')) && entry.cookie?.includes(BACKGROUND_COOKIE) === true)).toBe(true);
+    const openRequests = background(backgroundPosterPath('open'));
+    expect(openRequests).toHaveLength(1);
+    expect(openRequests[0]?.cookie).toBeUndefined();
+    // Asked: answered from the cache, no request.
+    const before = site.requests.length;
+    expect(await askPreview(ext, open.tabId, open.stream.id)).toMatchObject({ outcome: 'ready', source: 'poster' });
+    expect(site.requests.slice(before).filter((entry) => entry.path.endsWith('.jpg'))).toEqual([]);
+
+    // The guarded poster answers 403 without Referer: tried once, nothing cached, the popup makes it with its rule.
+    const guarded = await load('guarded');
+    await waitFor('the refused background request', () => Promise.resolve(background(backgroundPosterPath('guarded')).length > 0 ? true : undefined), 30_000);
+    await new Promise((done) => setTimeout(done, 500));
+    expect(await cachedPreview(ext, guarded.stream.id)).toBeUndefined();
+    expect(await askPreview(ext, guarded.tabId, guarded.stream.id)).toMatchObject({ outcome: 'ready', status: 'ready', source: 'poster' });
+    expect(background(backgroundPosterPath('guarded'))).toHaveLength(1);
+    await open.page.close();
+    await guarded.page.close();
     await ext.close();
   });
 

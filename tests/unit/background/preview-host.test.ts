@@ -70,7 +70,12 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function setup(
   sendMake: PreviewHostDeps['sendMake'],
-  options: { ensure?: () => Promise<void>; findStream?: PreviewHostDeps['findStream']; frameMetadata?: PreviewHostDeps['frameMetadata'] } = {},
+  options: {
+    ensure?: () => Promise<void>;
+    findStream?: PreviewHostDeps['findStream'];
+    frameMetadata?: PreviewHostDeps['frameMetadata'];
+    backgroundPending?: PreviewHostDeps['backgroundPending'];
+  } = {},
 ) {
   const cache = new MemoryCache();
   const released = vi.fn();
@@ -92,6 +97,7 @@ function setup(
     sendMake,
     sendCancel,
     keptStreamIds: () => Promise.resolve(new Set(['kept'])),
+    ...(options.backgroundPending ? { backgroundPending: options.backgroundPending } : {}),
     extensionOrigin: ORIGIN,
     now: () => 5,
   });
@@ -119,6 +125,45 @@ describe('PreviewHost', () => {
     expect(hold).toHaveBeenCalledTimes(2);
     expect(released).toHaveBeenCalledTimes(2);
     expect(cache.records.get('s1')?.status).toBe('ready');
+  });
+
+  it('waits for the picture being made in the background, then answers from the cache (1.2.4)', async () => {
+    const sendMake = vi.fn(() => Promise.resolve({ failure: 'failed' }));
+    let finish: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const { host, cache } = setup(sendMake, { backgroundPending: (streamId) => (streamId === 's1' ? pending : undefined) });
+    const port = new FakePort();
+    connect(host, port);
+    port.receive({ streamId: 's1', tabId: 7 });
+    await flush();
+    expect(host.isMaking('s1')).toBe(true);
+    expect(port.sent).toEqual([]);
+    await cache.put({ key: 's1', status: 'ready', type: 'image/webp', bytes: new ArrayBuffer(16), source: 'poster', savedAt: 1 });
+    finish();
+    await vi.waitFor(() => {
+      expect(port.sent).toEqual([{ streamId: 's1', outcome: 'ready' }]);
+    });
+    expect(sendMake).not.toHaveBeenCalled();
+    expect(host.isMaking('s1')).toBe(false);
+  });
+
+  it('ends a run whose popup closed while it waited for a background picture', async () => {
+    const sendMake = vi.fn(() => Promise.resolve({ failure: 'failed' }));
+    const { host, hold, released } = setup(sendMake, { backgroundPending: () => new Promise<void>(() => undefined) });
+    const port = new FakePort();
+    connect(host, port);
+    port.receive({ streamId: 's1', tabId: 7 });
+    await flush();
+    expect(host.isMaking('s1')).toBe(true);
+    port.disconnect();
+    await vi.waitFor(() => {
+      expect(host.isMaking('s1')).toBe(false);
+    });
+    expect(released).toHaveBeenCalledTimes(hold.mock.calls.length);
+    expect(sendMake).not.toHaveBeenCalled();
+    expect(port.sent).toEqual([]);
   });
 
   it('ignores other ports, pages that are not the extension’s and invalid requests', async () => {

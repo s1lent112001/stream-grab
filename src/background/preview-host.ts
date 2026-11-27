@@ -27,9 +27,21 @@ export interface PreviewHostDeps extends Omit<PreviewRunnerDeps, 'make' | 'warm'
   sendCancel(previewIds: string[]): Promise<void>;
   /** Stream ids that tasks in Queue and Completed show: their previews are kept when the cache is pruned. */
   keptStreamIds(): Promise<ReadonlySet<string>>;
+  /** The picture the service worker is making for this stream before any popup asked (1.2.4): waited for, not fetched twice. */
+  backgroundPending?(streamId: string): Promise<void> | undefined;
   /** Origin of extension pages (`chrome-extension://<id>/`): only the popup may connect. */
   extensionOrigin: string;
   logger?: Logger;
+}
+
+/** Resolves when `signal` aborts (never removed: the signal is the popup's, gone with it). */
+function abortion(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => {
+      resolve();
+    }, { once: true });
+  });
 }
 
 /** The offscreen document's answer may not come at all (it was closed): give up a little after its own timeout. */
@@ -44,6 +56,8 @@ export class PreviewHost {
   readonly #asking = new Map<string, ReturnType<PreviewHostDeps['frameMetadata']>>();
   /** Lease id → its preview and release. */
   readonly #leases = new Map<string, { previewId: string; release: ReleaseContext }>();
+  /** Stream id → runs making its preview for any popup now. */
+  readonly #making = new Map<string, number>();
   #nextId = 1;
 
   constructor(deps: PreviewHostDeps) {
@@ -117,17 +131,30 @@ export class PreviewHost {
     return answer;
   }
 
+  /** Whether a popup is having this stream's preview made now (background pictures leave it alone). */
+  isMaking(streamId: string): boolean {
+    return this.#making.has(streamId);
+  }
+
   /** One run of the runner, holding the offscreen document so it is not closed between two attempts. */
   async #run(request: PreviewPortRequest, signal: AbortSignal): Promise<'ready' | 'none'> {
     if (signal.aborted) return 'none';
+    const { streamId } = request;
+    this.#making.set(streamId, (this.#making.get(streamId) ?? 0) + 1);
     const release = this.#deps.holdOffscreen();
     try {
-      return await this.#runner.run(request.streamId, request.tabId, signal);
+      // A picture being made in the background is waited for: the runner then finds it in the cache.
+      const background = this.#deps.backgroundPending?.(streamId);
+      if (background) await Promise.race([background, abortion(signal)]);
+      return await this.#runner.run(streamId, request.tabId, signal);
     } catch (error) {
       this.#deps.logger?.warn('Could not make a preview', { error: errorMessage(error) });
       return 'none';
     } finally {
       release();
+      const runs = (this.#making.get(streamId) ?? 1) - 1;
+      if (runs > 0) this.#making.set(streamId, runs);
+      else this.#making.delete(streamId);
     }
   }
 
