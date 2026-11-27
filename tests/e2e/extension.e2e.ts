@@ -27,6 +27,7 @@ import {
   previewPicturePath,
   type PreviewCaseName,
 } from '@tests/fixtures/preview-routes';
+import { PLAYED_GRID_SIZE, PLAYED_SPA_NEXT, playedGridPath, playedPagePath, playedStreamPath, type PlayedStream } from '@tests/fixtures/played-routes';
 import {
   HISTORY_PLAIN_PATH,
   HISTORY_WATCH_PATH,
@@ -1201,6 +1202,97 @@ describe('StreamGrab in Chrome (Chrome for Testing, unpacked dist/)', () => {
     expect(background(backgroundPosterPath('guarded'))).toHaveLength(1);
     await open.page.close();
     await guarded.page.close();
+    await ext.close();
+  });
+
+  it('keeps the frame of a video as it plays before the popup asks: a single-page site, a framed player, after an ad, five a page (1.2.4)', async () => {
+    // The extension page first: the video pages must be the tab shown (no frame is taken in a hidden tab).
+    const ext = await extensionPage();
+    const tabOf = (pageUrl: string) =>
+      waitFor('the tab', () => ext.evaluate(async (url) => (await chrome.tabs.query({})).find((tab) => tab.url === url)?.id, pageUrl));
+    const listed = (tabId: number) =>
+      ext.evaluate(async (key) => ((await chrome.storage.session.get(key))[key] as { streams: DetectedStream[] } | undefined)?.streams ?? [], `detections:${tabId}`);
+    const streamOf = (tabId: number, path: string) =>
+      waitFor(`the stream ${path}`, async () => (await listed(tabId)).find((stream) => new URL(stream.url).pathname === path));
+    const framed = (streamId: string) =>
+      waitFor('the frame taken as the video played', async () => {
+        const record = await cachedPreview(ext, streamId);
+        return record?.status === 'ready' ? record : undefined;
+      }, 30_000);
+    const open = async (path: string) => {
+      const pageUrl = `${site.origin}${path}`;
+      const page = await browser.newPage();
+      await page.goto(pageUrl);
+      await page.bringToFront();
+      return { page, tabId: await tabOf(pageUrl) };
+    };
+    const played = (name: PlayedStream) => playedStreamPath(name);
+
+    // A single-page site: each page's video gets its own frame, no popup asked.
+    const spa = await open(playedPagePath('spa'));
+    const one = await streamOf(spa.tabId, played('spa-one'));
+    expect(await framed(one.id)).toEqual({ status: 'ready', source: 'player' });
+    await spa.page.waitForFunction((next) => location.pathname === next, { timeout: 15_000 }, PLAYED_SPA_NEXT);
+    const two = await streamOf(spa.tabId, played('spa-two'));
+    expect(await framed(two.id)).toEqual({ status: 'ready', source: 'player' });
+    // The new page lists its own video only.
+    expect((await listed(spa.tabId)).map((stream) => new URL(stream.url).pathname)).toEqual([played('spa-two')]);
+    // The cached frame is a picture of the video.
+    const picture = await askPreview(ext, spa.tabId, two.id);
+    expect(picture).toMatchObject({ outcome: 'ready', source: 'player' });
+    expect((picture as { colours?: number }).colours).toBeGreaterThan(8);
+    await spa.page.close();
+
+    // A player in a frame from another site.
+    const frame = await open(playedPagePath('frame'));
+    const framedStream = await streamOf(frame.tabId, played('frame'));
+    expect(framedStream.frameId).not.toBe(0);
+    expect(await framed(framedStream.id)).toEqual({ status: 'ready', source: 'player' });
+    await frame.page.close();
+
+    // An ad plays first in the player's ad slot: hidden from the list, and its frame is never the video's.
+    const ad = await open(playedPagePath('ad'));
+    const video = await streamOf(ad.tabId, played('ad'));
+    await ad.page.waitForSelector('body[data-ad-done="true"]', { timeout: 20_000 });
+    // The ad played 3 s, long enough for its frame: the video, not playing yet, has none.
+    expect(await cachedPreview(ext, video.id)).toBeUndefined();
+    await ad.page.waitForSelector('body[data-playing-video="true"]', { timeout: 20_000 });
+    expect(await framed(video.id)).toEqual({ status: 'ready', source: 'player' });
+    const adStream = (await listed(ad.tabId)).find((stream) => new URL(stream.url).pathname.includes('/creative.'));
+    expect(adStream?.hidden).toBe('ad-host');
+    await ad.page.close();
+
+    // A page of autoplaying previews: five frames, however many play (the junk filter, which hides them, off).
+    const setHideJunk = (value: boolean) =>
+      ext.evaluate(
+        async (key, value) => {
+          const current = ((await chrome.storage.local.get(key))[key] as Record<string, unknown> | undefined) ?? {};
+          await chrome.storage.local.set({ [key]: { ...current, hideJunk: value } });
+        },
+        STORAGE_KEYS.settings,
+        value,
+      );
+    await setHideJunk(false);
+    try {
+      const grid = await open(playedPagePath('grid'));
+      const h264 = await grid.page.evaluate(() => MediaSource.isTypeSupported('video/mp4; codecs="avc1.640014"'));
+      const paths = Array.from({ length: PLAYED_GRID_SIZE }, (_, at) => playedGridPath(at, h264));
+      const { streams } = await detected(ext, `${site.origin}${playedPagePath('grid')}`, paths);
+      const framedCount = async () => {
+        let count = 0;
+        for (const stream of streams) if ((await cachedPreview(ext, stream.id))?.source === 'player') count += 1;
+        return count;
+      };
+      await waitFor('five frames', async () => ((await framedCount()) >= 5 ? true : undefined), 30_000);
+      // Every tile played long enough for a frame: still five.
+      await new Promise((done) => setTimeout(done, 4000));
+      expect(await framedCount()).toBe(5);
+      await grid.page.close();
+    } finally {
+      await setHideJunk(true);
+    }
+    // The pages' inspections leave no header rule behind: a rule change would clear the back/forward cache of the next test.
+    await waitFor('no header rule', async () => ((await ext.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).length === 0 ? true : undefined), 30_000);
     await ext.close();
   });
 

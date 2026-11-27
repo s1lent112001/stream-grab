@@ -34,8 +34,11 @@ export interface DetectionService {
 const log = createLogger('detection');
 
 export interface DetectionServiceOptions {
-  /** A tab's list changed: the videos it shows (hidden ones left out), e.g. for pictures made before the popup opens (1.2.4). */
-  onListChanged?(tabId: number, listed: readonly DetectedStream[]): void;
+  /**
+   * A tab's list changed: the videos it shows (hidden ones left out), e.g. for pictures made before
+   * the popup opens (1.2.4); `listStartedAt`: when the page of that list started.
+   */
+  onListChanged?(tabId: number, listed: readonly DetectedStream[], listStartedAt?: number): void;
 }
 
 /**
@@ -74,10 +77,10 @@ export function startDetectionService(options: DetectionServiceOptions = {}): De
       getFrameMetadata: (tabId, frameId) => sendToContent(tabId, frameId, 'content/getMetadata'),
       delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     }),
-    onTabChanged: (tabId, streams) => {
+    onTabChanged: (tabId, streams, listStartedAt) => {
       const listed = listedStreams(streams, hideJunk);
       updateBadge(tabId, listed.length);
-      options.onListChanged?.(tabId, listed);
+      options.onListChanged?.(tabId, listed, listStartedAt);
     },
     logger: log,
   });

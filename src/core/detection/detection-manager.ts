@@ -97,8 +97,8 @@ export interface DetectionManagerOptions {
   getTabUrl?: (tabId: number) => Promise<string | undefined>;
   /** When to ask the player for its cues after a page subtitle file was found (it adds them after loading it). */
   cueCheckDelaysMs?: readonly number[];
-  /** Called after a tab's detections were persisted (badge updates). */
-  onTabChanged?: (tabId: number, streams: readonly DetectedStream[]) => void;
+  /** Called after a tab's detections were persisted (badge updates); `listStartedAt`: when its page's list started. */
+  onTabChanged?: (tabId: number, streams: readonly DetectedStream[], listStartedAt?: number) => void;
   now?: () => number;
   inspectionConcurrency?: number;
   flushDelayMs?: number;
@@ -408,6 +408,11 @@ export class DetectionManager {
     const tab = await this.#tab(tabId);
     this.#markJunk(tab);
     return this.#visible(tab);
+  }
+
+  /** When the list of the tab's current page started (1.2.4: frames of an earlier page are dropped). */
+  async listStartedAt(tabId: number): Promise<number | undefined> {
+    return (await this.#tab(tabId)).listStartedAt;
   }
 
   /** A copy of one stream, or undefined when it is not (or no longer) listed. */
@@ -1120,7 +1125,7 @@ export class DetectionManager {
         this.#logger?.error('Could not save tab detections', { tabId: tab.tabId, error: errorMessage(error) });
       }
       // Also when the write failed (session storage full): the badge follows the list in memory.
-      this.#onTabChanged?.(tab.tabId, streams);
+      this.#onTabChanged?.(tab.tabId, streams, tab.listStartedAt);
     });
     this.#saveChains.set(tab.tabId, next);
     return next;

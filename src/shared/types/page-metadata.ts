@@ -89,6 +89,28 @@ export type PlayerFrameFailure = (typeof PLAYER_FRAME_FAILURES)[number];
 /** A WebP / JPEG data URL (checked by the service worker), or why there is none. */
 export type PlayerFrameResult = { dataUrl: string } | { failure: PlayerFrameFailure };
 
+/**
+ * A frame a `<video>` showed as it played, sent by the frame's content script without being asked
+ * (1.2.4). The service worker matches it to a listed stream as it matches the player frame, so it
+ * gets the frame's `<video>` elements as `content/getMetadata` would list them.
+ */
+export interface PlayedFrameReport {
+  /** Position of the `<video>` among `videos`. */
+  index: number;
+  videos: VideoElementInfo[];
+  /** WebP / JPEG data URL (checked by the service worker). */
+  dataUrl: string;
+  /**
+   * When the page the frame belongs to started (epoch ms): the content script's start, or the
+   * time of the top frame's last move to another page. A frame of a page older than the tab's list
+   * is of a page left since, and is dropped.
+   */
+  pageStart: number;
+}
+
+/** Longest data URL a played frame may have (a preview is at most 32 KB: base64 makes it 4/3 of that). */
+const MAX_PLAYED_FRAME_URL = 48_000;
+
 export const METADATA_LIMITS = {
   maxTextLength: 300,
   maxVideos: 50,
@@ -157,6 +179,29 @@ function parseVideoInfo(raw: unknown): VideoElementInfo | null {
   return info;
 }
 
+function parseVideoInfos(raw: unknown): VideoElementInfo[] {
+  return Array.isArray(raw)
+    ? raw
+        .slice(0, METADATA_LIMITS.maxVideos)
+        .map(parseVideoInfo)
+        .filter((video) => video !== null)
+    : [];
+}
+
+/** Validates a content script's played frame (page-controlled); the data URL is checked later as a picture. */
+export function parsePlayedFrame(raw: unknown): PlayedFrameReport | null {
+  if (!isRecord(raw)) return null;
+  const { index, dataUrl, pageStart } = raw;
+  if (typeof dataUrl !== 'string' || dataUrl.length > MAX_PLAYED_FRAME_URL) return null;
+  if (typeof pageStart !== 'number' || !Number.isFinite(pageStart) || pageStart < 0) return null;
+  // Every element must parse: a position counts only in the list the page sent.
+  if (!Array.isArray(raw['videos']) || raw['videos'].length > METADATA_LIMITS.maxVideos) return null;
+  const videos = parseVideoInfos(raw['videos']);
+  if (videos.length !== raw['videos'].length) return null;
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= videos.length) return null;
+  return { index, videos, dataUrl, pageStart };
+}
+
 function parseVideoObject(raw: unknown): VideoObjectInfo | null {
   if (!isRecord(raw)) return null;
   const object: VideoObjectInfo = {};
@@ -171,12 +216,7 @@ export function parseFrameMetadata(raw: unknown): FrameMetadata | null {
   if (!isRecord(raw) || typeof raw['url'] !== 'string' || raw['url'].length > METADATA_LIMITS.maxUrlLength) {
     return null;
   }
-  const videos = Array.isArray(raw['videos'])
-    ? raw['videos']
-        .slice(0, METADATA_LIMITS.maxVideos)
-        .map(parseVideoInfo)
-        .filter((video) => video !== null)
-    : [];
+  const videos = parseVideoInfos(raw['videos']);
   const metadata: FrameMetadata = { url: raw['url'], isTopFrame: raw['isTopFrame'] === true, videos };
   const documentTitle = cleanText(raw['documentTitle']);
   const socialTitle = cleanText(raw['socialTitle']);

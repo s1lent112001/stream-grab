@@ -111,7 +111,8 @@ export class PreviewRunner {
       if (attempt.failure === 'cancelled') return 'none';
       if (attempt.failure === 'failed') tried.add(source.kind);
     }
-    if (tried.size > before) {
+    // A picture cached meanwhile (a frame of the video as it played, 1.2.4) is not replaced by a failure.
+    if (tried.size > before && (await deps.cache.get(stream.id).catch(() => undefined))?.status !== 'ready') {
       await deps.cache.put({ key: stream.id, status: 'failed', tried: [...tried], savedAt: deps.now() });
     }
     return 'none';

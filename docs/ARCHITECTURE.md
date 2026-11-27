@@ -1759,6 +1759,69 @@ still made by the popup, and the others have no poster. The quick HLS tile besid
 still waits for the heavy lane (~4.7 s; 0.9 s in a run where the list put it first). The
 offscreen document is still never open when the popup opens.
 
+### The frame of a video as it plays (Phase 4)
+
+- **In the page** (`content/play-capture.ts`, started by the content script in every frame): one
+  capture listener for `playing` on the document (it does not bubble), and a look at the videos
+  already playing when the script starts (`document_idle` comes after many autoplays). A video
+  that plays is looked at again after 1.5 s (`CAPTURE_AFTER_MS`): still the same `currentSrc`,
+  still playing, the tab shown; then, at an idle moment (`requestIdleCallback`, 1 s at most), its
+  frame is drawn as the popup's player frame is (`drawVideoFrame`, shared with
+  `content/getPlayerFrame`) and sent as `content/playedFrame` with the frame's `<video>` elements
+  as `content/getMetadata` lists them, the element's position and the start of its page (when the
+  script started, or the `at` of the top frame's last move to another page: the clock the list's
+  start is taken on). One frame per element and src
+  (`playing` fires again after every pause and stall); at most five a page
+  (`CAPTURES_PER_PAGE`; the top frame starts again on a single-page site's next page, not on a
+  replaced URL, and drops the frames due for the page left, then looks again at the videos still
+  playing). Not in a hidden tab (`playing` fires there): the video waits, with no timer, for
+  `visibilitychange` and is looked at again if it still plays. A nearly black picture (fewer than
+  2% of its pixels above level 24: a fade-in, a player between clips) counts as none, as does a
+  video without a decoded frame yet: tried again after 2 s, three times at most. A locked canvas
+  (a file from another site without CORS, DRM) is skipped for that src. Videos in a shadow root
+  are not seen, as today.
+- **In the service worker** (`core/preview/played-frames.ts`, `PlayedFrames`; the message is
+  refused from extension pages and prerendered documents and checked by `parsePlayedFrame`: every
+  element must parse, so positions hold, and the data URL is checked as a preview picture). The
+  frame is matched to the tab's listed streams of the sender's frame with `playingVideo`, the
+  popup's own rule for the player frame (an element pointing at the stream, the frame's only
+  `<video>` playing no file, or the only one showing a picture next to empty ad slots while the
+  tab lists one video), or an element pointing at the stream itself (a second element playing the
+  same file, which `playingVideo` never returns). One match: cached as a `ready` preview with source `player`, unless the
+  stream already has a ready picture (a poster made before the popup opened, a frame the popup
+  made); a cached failure is replaced, and the popup's runner no longer writes a failure over a
+  picture cached while it tried its sources. Several matches (two streams of one frame, nothing to tell
+  them apart) or a protected stream: dropped. No match yet (the stream is still being found), or
+  a stream still `pending` (it may turn out protected, whose frames are black): held in memory for
+  the tab, at most five (`PLAYED_HOLD_PER_TAB`) for 5 minutes, and matched again on each change
+  of the tab's list. A frame whose page started before the tab's list (`listStartedAt`, which the
+  detection manager now gives with each change and on request) is of a page being left or left
+  already: dropped when it comes and when the list changes, so a frame of the page being left (it
+  plays until the next document commits) or of a single-page site's first video never becomes the
+  next page's. A player frame kept across a single-page site's pages (its own document did not
+  start again) is dropped too: the popup still takes its frame. Work per tab is chained, so a
+  frame and a list change never interleave. A closed tab drops its frames and holds no later one;
+  a restarted worker forgets them (the stream is listed by then in nearly every case).
+- **Cost**: no request; one draw of a 104 × 104 canvas and one small message per video, at most
+  five a page; the service worker wakes for it. The popup and the pictures made before it opens
+  read the cache first, so a frame kept this way answers them with no question to the page.
+- **Known limit**: a player that plays an ad and then the video in the same `<video>` (one MSE
+  source for both) gives the ad's frame if the ad plays longer than 1.5 s, as the popup's player
+  frame would while the ad shows.
+- **End-to-end** (`/previews/played/*`, newest Chrome and 116): a single-page site's two videos each
+  get their own frame and the second page lists only its own; a player in a frame from the other
+  host gets its frame (frame id ≠ 0); after an ad from the junk filter's ad host plays 3 s in the
+  player's ad slot (CORS, so its frame can be read), the video has no picture until it plays, then
+  its own frame, and the ad is hidden; on a page of eight autoplaying previews (junk filter off)
+  five frames are kept, and still five 4 s later. The test then waits until no header rule is
+  left: a rule removed late cleared the back/forward cache of the next test once.
+
+**Measured** (timing harness, Chrome for Testing 157, median of 3, same settings; report
+`.cache/timing/phase4-157.json`): A and B (playing) 82–83 → 67 ms, now answered from the cache
+(the frame kept as the video played) with no question to the page; the other cases unchanged
+within the noise (C 292, D 313, E 924 / 623, F 305 ms); several videos unchanged (the quick HLS
+tile still waits for the heavy lane).
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

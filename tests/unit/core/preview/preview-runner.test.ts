@@ -148,6 +148,19 @@ describe('PreviewRunner', () => {
     expect(invalid.cache.records.get('s1')).toMatchObject({ status: 'failed', tried: ['segment-frame'] });
   });
 
+  it('keeps a picture cached while its sources failed (a frame of the video as it played, 1.2.4)', async () => {
+    const meanwhile: { cache?: PreviewCache } = {};
+    const run = setup({
+      make: async () => {
+        await meanwhile.cache?.put({ key: 's1', status: 'ready', type: 'image/webp', bytes: new ArrayBuffer(4), source: 'player', savedAt: 5 });
+        return { failure: 'failed' };
+      },
+    });
+    meanwhile.cache = run.cache;
+    await run.runner.run('s1', 7, signal());
+    expect(run.cache.records.get('s1')).toMatchObject({ status: 'ready', source: 'player' });
+  });
+
   it('tries a played video’s frame before its poster, which no longer shows', async () => {
     const { cache, make, playerFrame, warm, runner } = setup({
       frame: page({ videos: [{ poster: 'https://site.example/p.jpg', hasPicture: true, played: true }] }),

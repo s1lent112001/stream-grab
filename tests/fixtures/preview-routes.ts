@@ -26,7 +26,8 @@
  * opens (without cookies or Referer) and leaves the second to the popup. One video a page: two
  * short clips on one page are hidden as junk.
  *
- * Pages of the preview timing harness (1.2.4) live below /previews/timing/ (preview-timing-routes.ts).
+ * Pages of the preview timing harness (1.2.4) live below /previews/timing/ (preview-timing-routes.ts),
+ * pages of frames taken as a video plays (1.2.4) below /previews/played/ (played-routes.ts).
  *
  * Without H.264 (Chrome for Testing 116) the pages that play a file or MSE play WebM instead and
  * name the stream they play in `<body data-stream>`.
@@ -38,6 +39,7 @@ import type { FixtureResponse } from './fixture-routes.ts';
 import type { SyntheticFiles } from './media/synthetic-files.ts';
 import { dashManifest, H264_CODEC, hlsMasterPlaylist, hlsMediaPlaylist } from './media/synthetic-manifests.ts';
 import type { Rendition, SyntheticMedia } from './media/synthetic-media.ts';
+import { createPlayedRouter, PLAYED_PREFIX } from './played-routes.ts';
 import { createPreviewTimingRouter, PREVIEW_TIMING_PREFIX } from './preview-timing-routes.ts';
 import { serveFile } from './progressive-routes.ts';
 
@@ -307,10 +309,12 @@ export function createPreviewRouter(
   );
 
   const timing = createPreviewTimingRouter(media, files);
+  const played = createPlayedRouter(media, files);
 
   return (pathname, request = {}) => {
     if (pathname === '/previews' || pathname === PREVIEW_PAGE_PREFIX) return ok(HTML, indexPage());
     if (pathname.startsWith(PREVIEW_TIMING_PREFIX)) return timing(pathname, request);
+    if (pathname.startsWith(PLAYED_PREFIX)) return played(pathname, request);
     if (pathname === backgroundPagePath('open') || pathname === backgroundPagePath('guarded')) {
       return ok(HTML, backgroundPage(pathname === backgroundPagePath('open') ? 'open' : 'guarded'));
     }

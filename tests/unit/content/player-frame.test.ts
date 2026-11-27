@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { capturePlayerFrame } from '@/content/player-frame';
+import { capturePlayerFrame, drawVideoFrame } from '@/content/player-frame';
 
 const WEBP = 'data:image/webp;base64,UklGRhYAAABXRUJQVlA4IAoAAAAQAAAAAAAAAAAAAA==';
 
@@ -75,5 +75,39 @@ describe('capturePlayerFrame', () => {
       type === 'image/jpeg' ? 'data:image/jpeg;base64,/9j/4AAQ' : 'data:image/png;base64,iVBOR',
     );
     expect(capturePlayerFrame(document, { index: 0 })).toEqual({ dataUrl: 'data:image/jpeg;base64,/9j/4AAQ' });
+  });
+
+  describe('with rejectBlank (frames taken as a video plays, 1.2.4)', () => {
+    /** Pixels of a 104 × 104 picture, `lit` of them bright. */
+    const pixels = (lit: number) => {
+      const data = new Uint8ClampedArray(104 * 104 * 4);
+      for (let at = 0; at < lit; at += 1) data[at * 4 + 1] = 200;
+      return { data };
+    };
+
+    it('takes a nearly black picture as none, and a lit one as a picture', () => {
+      document.body.innerHTML = '<video></video>';
+      const video = document.querySelector('video')!;
+      showPicture(video);
+      const getImageData = vi.fn().mockReturnValue(pixels(100));
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage, getImageData } as unknown as CanvasRenderingContext2D);
+      expect(drawVideoFrame(document, video, true)).toEqual({ failure: 'no-picture' });
+      getImageData.mockReturnValue(pixels(2000));
+      expect(drawVideoFrame(document, video, true)).toEqual({ dataUrl: WEBP });
+      // The popup's player frame takes what the player shows, black or not.
+      expect(drawVideoFrame(document, video)).toEqual({ dataUrl: WEBP });
+      expect(getImageData).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a locked canvas when its pixels may not be read', () => {
+      document.body.innerHTML = '<video></video>';
+      const video = document.querySelector('video')!;
+      showPicture(video);
+      const getImageData = vi.fn(() => {
+        throw new DOMException('The canvas has been tainted by cross-origin data.', 'SecurityError');
+      });
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage, getImageData } as unknown as CanvasRenderingContext2D);
+      expect(drawVideoFrame(document, video, true)).toEqual({ failure: 'locked' });
+    });
   });
 });

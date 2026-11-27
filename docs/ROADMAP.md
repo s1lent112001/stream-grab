@@ -403,6 +403,11 @@ Phases (one session each, measured before and after):
    posters below the fold cached too; single-video cases unchanged.
 4. **Idea 1** (capture on play, matching and holding), e2e for an SPA, an iframe player, an ad
    slot and a page of autoplay previews (the cap), measure.
+   **Done 2026-11-27** (ARCHITECTURE "The frame of a video as it plays"): one frame per element and
+   src after 1.5 s of playback, at an idle moment, five a page, never in a hidden tab, a black
+   frame tried again; the service worker matches it with the popup's player-frame rules, holds it
+   until the stream is listed and drops frames of a page left. Playing cases 82 → 67 ms (from the
+   cache); the rest unchanged.
 5. **Release** (Sonnet low): regression on the newest Chrome and 116, CHANGELOG, README, version
    1.2.4, ZIP, GitHub Release.
 

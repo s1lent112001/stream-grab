@@ -65,7 +65,7 @@ export interface PlayingVideo {
   video: VideoElementInfo;
 }
 
-function pointsAt(video: VideoElementInfo, stream: PreviewStream): boolean {
+export function pointsAt(video: VideoElementInfo, stream: PreviewStream): boolean {
   const urls = [video.src, ...(video.sources ?? [])].filter((url) => url !== undefined);
   return urls.some((url) => url === stream.url || dedupeKey(url) === stream.dedupeKey);
 }
@@ -92,7 +92,7 @@ export function playingVideo(stream: PreviewStream, frame: FrameMetadata | null,
 }
 
 /** Protected by DRM: the player's canvas shows black, and no frame can be made. */
-function isProtected(stream: PreviewStream): boolean {
+export function isProtected(stream: PreviewStream): boolean {
   return (
     stream.status === 'drm' ||
     (stream.manifest?.drmSystems.length ?? 0) > 0 ||

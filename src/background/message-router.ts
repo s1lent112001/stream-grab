@@ -4,9 +4,10 @@ import { parseDownloadRequests, type TaskService } from '@/core/download/task-se
 import { OFFSCREEN_DOCUMENT_PATH } from '@/shared/constants';
 import { createMessageRouter, type MessageSender } from '@/shared/messaging/router';
 import { parsePageChange } from '@/shared/types/page-change';
-import { parseDomSources } from '@/shared/types/page-metadata';
+import { parseDomSources, parsePlayedFrame } from '@/shared/types/page-metadata';
 import { StreamGrabError } from '@/shared/utils/errors';
 import { isRecord } from '@/shared/utils/guards';
+import type { PlayedFrames } from '@/core/preview/played-frames';
 import type { DetectionService } from './detection-service';
 import type { PreviewHost } from './preview-host';
 
@@ -17,6 +18,7 @@ export interface BackgroundContext {
   tasks: TaskService;
   downloads: DownloadCoordinator;
   previews: PreviewHost;
+  played: PlayedFrames;
 }
 
 /** True for messages from extension pages (popup, offscreen document), false for content scripts. */
@@ -98,6 +100,16 @@ export function registerMessageRouter(context: BackgroundContext): void {
         if (!change) throw new StreamGrabError('Invalid page change', 'INVALID_MESSAGE');
         // Answered once the new page's list is in place: the content script then reports its sources again.
         await context.detection.manager.changePage(tabId, change);
+        return undefined;
+      },
+
+      'content/playedFrame': (payload, sender) => {
+        // Location comes from the browser (sender), never from the payload.
+        const tabId = sender.tab?.id;
+        if (tabId === undefined || isExtensionPage(sender) || sender.documentLifecycle === 'prerender') return undefined;
+        const report = parsePlayedFrame(payload);
+        if (!report) throw new StreamGrabError('Invalid played frame', 'INVALID_MESSAGE');
+        context.played.offer(tabId, sender.frameId ?? 0, report);
         return undefined;
       },
 

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import { collectFrameMetadata, structuredVideoTitle } from '@/content/page-metadata';
-import { parseFrameMetadata } from '@/shared/types/page-metadata';
+import { parseFrameMetadata, parsePlayedFrame } from '@/shared/types/page-metadata';
 
 describe('collectFrameMetadata', () => {
   beforeEach(() => {
@@ -156,5 +156,26 @@ describe('parseFrameMetadata picture fields (1.2.0)', () => {
     });
     expect(parsed?.videos[0]?.sources).toHaveLength(5);
     expect(parsed?.videoObjects).toHaveLength(10);
+  });
+});
+
+describe('parsePlayedFrame (1.2.4)', () => {
+  const dataUrl = 'data:image/webp;base64,UklGRg==';
+
+  it('keeps a valid frame and its videos', () => {
+    const report = { index: 1, videos: [{ src: 'https://a.example/ad.mp4' }, { hasPicture: true, played: true }], dataUrl, pageStart: 1_700_000_000_000 };
+    expect(parsePlayedFrame(JSON.parse(JSON.stringify(report)))).toEqual(report);
+  });
+
+  it('refuses a position outside the list, a list with an unreadable element, or an oversized picture', () => {
+    expect(parsePlayedFrame({ index: 1, videos: [{}], dataUrl, pageStart: 1 })).toBeNull();
+    expect(parsePlayedFrame({ index: 0.5, videos: [{}], dataUrl, pageStart: 1 })).toBeNull();
+    // A dropped element would shift the positions after it.
+    expect(parsePlayedFrame({ index: 1, videos: ['x', {}], dataUrl, pageStart: 1 })).toBeNull();
+    expect(parsePlayedFrame({ index: 0, videos: Array.from({ length: 51 }, () => ({})), dataUrl, pageStart: 1 })).toBeNull();
+    expect(parsePlayedFrame({ index: 0, videos: [{}], dataUrl: `data:image/webp;base64,${'A'.repeat(60_000)}`, pageStart: 1 })).toBeNull();
+    expect(parsePlayedFrame({ index: 0, videos: [{}] })).toBeNull();
+    expect(parsePlayedFrame({ index: 0, videos: [{}], dataUrl })).toBeNull();
+    expect(parsePlayedFrame({ index: 0, videos: [{}], dataUrl, pageStart: Number.NaN })).toBeNull();
   });
 });

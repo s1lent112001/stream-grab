@@ -30,22 +30,45 @@ function encode(canvas: HTMLCanvasElement): string | undefined {
   return undefined;
 }
 
-export function capturePlayerFrame(doc: Document, request: PlayerFrameRequest): PlayerFrameResult {
-  const video = findVideo(doc, request);
-  if (!video) return { failure: 'not-found' };
+/** Channel level a pixel must pass to count as lit. */
+const DARK_LEVEL = 24;
+/** Share of lit pixels below which a picture counts as blank. */
+const LIT_SHARE = 0.02;
+
+/** Nearly every pixel is black: a fade-in, a player between two clips, a protected picture. */
+function isBlank(context: CanvasRenderingContext2D): boolean {
+  const { data } = context.getImageData(0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
+  let lit = 0;
+  for (let at = 0; at < data.length; at += 4) {
+    if (Math.max(data[at]!, data[at + 1]!, data[at + 2]!) > DARK_LEVEL) lit += 1;
+  }
+  return lit < (data.length / 4) * LIT_SHARE;
+}
+
+/**
+ * Draws what `video` shows now. `rejectBlank` (frames taken as a video plays, 1.2.4): a nearly
+ * black picture counts as no picture, so the caller tries again a little later.
+ */
+export function drawVideoFrame(doc: Document, video: HTMLVideoElement, rejectBlank = false): PlayerFrameResult {
   if (!hasPicture(video)) return { failure: 'no-picture' };
   const canvas = doc.createElement('canvas');
   canvas.width = PREVIEW_SIZE;
   canvas.height = PREVIEW_SIZE;
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext('2d', rejectBlank ? { willReadFrequently: true } : undefined);
   if (!context) return { failure: 'no-picture' };
   const crop = coverCrop(video.videoWidth, video.videoHeight);
   try {
     context.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
+    if (rejectBlank && isBlank(context)) return { failure: 'no-picture' };
     const dataUrl = encode(canvas);
     return dataUrl === undefined ? { failure: 'no-picture' } : { dataUrl };
   } catch {
     // SecurityError: the canvas is tainted by a cross-origin or protected picture.
     return { failure: 'locked' };
   }
+}
+
+export function capturePlayerFrame(doc: Document, request: PlayerFrameRequest): PlayerFrameResult {
+  const video = findVideo(doc, request);
+  return video ? drawVideoFrame(doc, video) : { failure: 'not-found' };
 }

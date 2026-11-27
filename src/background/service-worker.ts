@@ -20,6 +20,7 @@ import { PARTIAL_DIRECTORY } from '@/core/download/partial-files';
 import { listedStreams } from '@/core/detection/junk-filter';
 import { BackgroundPreviews, parseBackgroundTabRecord } from '@/core/preview/background-previews';
 import { pictureFromResponse } from '@/core/preview/picture';
+import { PlayedFrames } from '@/core/preview/played-frames';
 import { IndexedDbPreviewCache } from '@/core/preview/preview-cache';
 import { sendToContent, sendToOffscreen } from '@/shared/messaging/client';
 import { parseFrameMetadata } from '@/shared/types/page-metadata';
@@ -45,8 +46,9 @@ self.addEventListener('unhandledrejection', (event) => {
 
 const detection = startDetectionService({
   // Called after startup, once a tab's list is saved: `background` exists by then.
-  onListChanged: (tabId, listed) => {
+  onListChanged: (tabId, listed, listStartedAt) => {
     background.listChanged(tabId, listed);
+    played.listChanged(tabId, listed, listStartedAt);
   },
 });
 const taskStore = new TaskStore(chrome.storage.local, chrome.storage.session);
@@ -144,8 +146,19 @@ const background: BackgroundPreviews = new BackgroundPreviews({
   now: () => Date.now(),
   logger: log,
 });
+// Frames of videos as they played (1.2.4), sent by the content scripts: kept as the previews of their streams.
+const played: PlayedFrames = new PlayedFrames({
+  cache: previewCache,
+  listed: async (tabId) => ({
+    streams: listedStreams(await detection.manager.getStreams(tabId), (await getSettingsStore().load()).hideJunk),
+    listStartedAt: await detection.manager.listStartedAt(tabId),
+  }),
+  now: () => Date.now(),
+  logger: log,
+});
 chrome.tabs.onRemoved.addListener((tabId) => {
   background.dropTab(tabId);
+  played.dropTab(tabId);
 });
 
 // Previews (1.2.0): asked by the open popup over a port, made by the content script or the offscreen document.
@@ -184,7 +197,7 @@ onOffscreenReleased(() => {
   void downloads.pump();
 });
 
-registerMessageRouter({ startedAt, detection, tasks, downloads, previews });
+registerMessageRouter({ startedAt, detection, tasks, downloads, previews, played });
 
 // Chrome finished (or gave up) saving a merged file: complete the task. Also wakes a suspended worker.
 chrome.downloads.onChanged.addListener((delta) => {

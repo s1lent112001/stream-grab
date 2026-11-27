@@ -138,6 +138,10 @@ Serves a test site bound to 127.0.0.1, with these pages:
   `/previews/timing/a`, `/d` and `/many` (1.2.4) are the extra pages of the opt-in preview timing
   harness (`tests/e2e/preview-timing.e2e.ts`): a playing video with a poster, an MP4 from the other
   host not played, and a page of eight videos, two of them on a slow server.
+  `/previews/played/spa`, `/frame`, `/ad` and `/grid` (1.2.4) play a video the extension keeps a
+  frame of as it plays: a single-page site that moves to a second video, a player in a frame from
+  the other host, a video after an ad in its player's ad slot, and eight autoplaying previews (at
+  most five frames a page).
 - <http://localhost:5180/live>: **a live channel next to a replay** (0.4.0). The page requests a
   VOD once and a live playlist 30 times with a changing LL-HLS query; only the VOD is listed and
   the badge stays at 1.
