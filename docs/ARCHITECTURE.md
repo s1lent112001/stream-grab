@@ -1659,6 +1659,44 @@ about 220 ms when the player already shows a frame; everything else waits for th
   started; a video already playing at injection (a slow page) is missed by the listener, so the
   script also looks once at the videos playing when it starts.
 
+### Popup lanes (Phase 2)
+
+- **Two lanes instead of one limiter.** The 1.2.0 limiter of 2 wrapped a whole preview run, so two
+  slow frames held every other tile. Now each *attempt* waits for a slot in its lane
+  (`PreviewLanes` in `preview-runner.ts`, made in `service-worker.ts`): the **cheap lane**, 4 slots,
+  for the player frame, the poster and the page picture (one small request or none), and the
+  **heavy lane**, 2 slots, for file and segment frames (up to 8 s each, in the offscreen
+  document). A stream's poster is never queued behind another stream's frame. Reading the cache,
+  finding the stream and asking its frames for metadata run outside the lanes; tiles that ask the
+  same frame at the same time share one `content/getMetadata` question (`PreviewHost`), so a popup
+  scrolled through a long list does not queue dozens on the page's main thread. A run whose popup
+  closed while the page answered stops there; an attempt whose popup closed while it waited for
+  its slot gives up at once; neither caches anything.
+- **The offscreen document is created early.** Once a run knows its sources, if any untried one
+  other than the player frame will need the offscreen document (poster, page picture, made
+  frame), the host starts creating it (`PreviewRunner` `warm` → `PreviewHost.#warm`) while the
+  player frame is tried. The early creation holds the document (`holdOffscreenDocument`) until it
+  exists, so a preview that ended meanwhile still lets it be closed when idle. With more callers
+  asking at once, `ensureOffscreenDocument` now joins a creation in progress before checking
+  whether a document exists, and takes Chrome's "only a single offscreen document" refusal as done
+  when a document exists. A close skipped because previews hold the document is asked again when
+  the last hold ends (before, only a preview that had used the document did that), so the engine's
+  idle document is not left open.
+- **The player frame before the poster once the video has played.** Frame metadata carries
+  `played` (`video.played.length > 0`); for such a video with a picture, `previewSources` lists the
+  player frame first: the poster no longer shows, and the frame costs no request (the poster
+  stays as the next source). A video that has not played keeps the poster first: its frame is
+  often black or the first frame, and the poster is what the page shows.
+
+**Measured** (timing harness, Chrome for Testing 157, median of 3, same settings as the baseline;
+report `.cache/timing/phase2-157.json`): A playing with a poster 302 → 88 ms (player frame now);
+B 80 → 66; C 286 → 240; D 323 → 254; E HLS / DASH 947 / 623 → 893 / 580; F locked file 310 → 251;
+popup reopened from the cache unchanged. Several videos: the poster tile 4123 → 301 ms (no longer
+behind the slow frames); the two slow HLS streams unchanged (~3.9 s, their own segments); the quick
+HLS stream still 4710 ms, as it needs the heavy lane both slow streams hold. The offscreen document
+was still never open when the popup opened: it is created as the popup asks, not before (Phase 3
+makes pictures before the popup opens).
+
 ## Known limitations
 
 - **Subtitles.** fMP4 text (`wvtt`, `stpp`/TTML), CEA-608/708 captions inside the video, image and

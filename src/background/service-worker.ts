@@ -90,7 +90,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 // Previews (1.2.0): asked by the open popup over a port, made by the content script or the offscreen document.
 const previews = new PreviewHost({
   cache: new IndexedDbPreviewCache(),
-  limit: createLimiter(2),
+  // Cheap sources (player frame, poster, page picture) never wait behind frames made from the video (1.2.4).
+  lanes: { cheap: createLimiter(4), heavy: createLimiter(2) },
   findStream: async (streamId, tabId) =>
     (tabId === undefined ? undefined : await getStream(tabId, streamId).catch(() => undefined)) ?? (await findStreams(streamId))[0],
   frameMetadata: async (tabId, frameId) => {

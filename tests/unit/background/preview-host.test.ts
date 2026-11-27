@@ -68,7 +68,10 @@ class FakePort {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function setup(sendMake: PreviewHostDeps['sendMake'], options: { ensure?: () => Promise<void>; findStream?: PreviewHostDeps['findStream'] } = {}) {
+function setup(
+  sendMake: PreviewHostDeps['sendMake'],
+  options: { ensure?: () => Promise<void>; findStream?: PreviewHostDeps['findStream']; frameMetadata?: PreviewHostDeps['frameMetadata'] } = {},
+) {
   const cache = new MemoryCache();
   const released = vi.fn();
   const hold = vi.fn(() => released);
@@ -78,9 +81,9 @@ function setup(sendMake: PreviewHostDeps['sendMake'], options: { ensure?: () => 
   const acquireContext = vi.fn(() => Promise.resolve(releaseRule));
   const host = new PreviewHost({
     cache,
-    limit: createLimiter(2),
+    lanes: { cheap: createLimiter(4), heavy: createLimiter(2) },
     findStream: options.findStream ?? (() => Promise.resolve(stream)),
-    frameMetadata: () => Promise.resolve(null),
+    frameMetadata: options.frameMetadata ?? (() => Promise.resolve(null)),
     videosOnPage: () => Promise.resolve(1),
     playerFrame: () => Promise.reject(new Error('no content script')),
     acquireContext,
@@ -112,8 +115,9 @@ describe('PreviewHost', () => {
     await vi.waitFor(() => {
       expect(port.sent).toEqual([{ streamId: 's1', outcome: 'ready' }]);
     });
-    expect(hold).toHaveBeenCalledTimes(1);
-    expect(released).toHaveBeenCalledTimes(1);
+    // One hold for the run, one while the document is created early (the file frame needs it).
+    expect(hold).toHaveBeenCalledTimes(2);
+    expect(released).toHaveBeenCalledTimes(2);
     expect(cache.records.get('s1')?.status).toBe('ready');
   });
 
@@ -188,12 +192,13 @@ describe('PreviewHost', () => {
   });
 
   it('does not send the job when the popup closed while the offscreen document was being created', async () => {
-    let created: (() => void) | undefined;
+    // Asked twice: early (while the player is tried) and by the job; both wait for the one document.
+    const created: (() => void)[] = [];
     const sendMake = vi.fn(() => Promise.resolve({ failure: 'failed' }));
     const { host, ensure, released } = setup(sendMake, {
       ensure: () =>
         new Promise<void>((resolve) => {
-          created = resolve;
+          created.push(resolve);
         }),
     });
     const port = new FakePort();
@@ -203,11 +208,41 @@ describe('PreviewHost', () => {
       expect(ensure).toHaveBeenCalled();
     });
     port.disconnect();
-    created?.();
+    for (const done of created) done();
     await vi.waitFor(() => {
-      expect(released).toHaveBeenCalledTimes(1);
+      // The run's hold and the early creation's hold.
+      expect(released).toHaveBeenCalledTimes(2);
     });
     expect(sendMake).not.toHaveBeenCalled();
+  });
+
+  it('asks a frame for its metadata once for tiles that need it at the same time (1.2.4)', async () => {
+    const asked: (() => void)[] = [];
+    const frameMetadata = vi.fn(
+      () =>
+        new Promise<null>((resolve) => {
+          asked.push(() => {
+            resolve(null);
+          });
+        }),
+    );
+    const { host } = setup(() => Promise.resolve({ failure: 'failed' }), {
+      findStream: (streamId) => Promise.resolve({ ...stream, id: streamId }),
+      frameMetadata,
+    });
+    const port = new FakePort();
+    connect(host, port);
+    port.receive({ streamId: 'a', tabId: 7 });
+    port.receive({ streamId: 'b', tabId: 7 });
+    await vi.waitFor(() => {
+      expect(asked.length).toBeGreaterThan(0);
+    });
+    await flush();
+    expect(frameMetadata).toHaveBeenCalledTimes(1);
+    for (const done of asked) done();
+    await vi.waitFor(() => {
+      expect(port.sent).toHaveLength(2);
+    });
   });
 
   it('runs again when asked under a new revision while the first run was going', async () => {

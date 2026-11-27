@@ -22,6 +22,8 @@ export interface VideoElementInfo {
   poster?: string;
   /** It shows a decoded picture now (readyState ≥ HAVE_CURRENT_DATA): the content script can draw it (1.2.0). */
   hasPicture?: boolean;
+  /** It has played some of its video, so its poster no longer shows (1.2.4). */
+  played?: boolean;
 }
 
 /** A schema.org VideoObject in the frame's JSON-LD (1.2.0). */
@@ -151,6 +153,7 @@ function parseVideoInfo(raw: unknown): VideoElementInfo | null {
   const poster = boundedHttpUrl(raw['poster'], METADATA_LIMITS.maxPictureUrlLength);
   if (poster !== undefined) info.poster = poster;
   if (raw['hasPicture'] === true) info.hasPicture = true;
+  if (raw['played'] === true) info.played = true;
   return info;
 }
 

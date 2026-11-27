@@ -8,7 +8,8 @@ import { dedupeKey } from '@/shared/utils/url';
  *
  * 1. `poster`:        the `poster` of the `<video>` that plays the stream;
  * 2. `player`:        the frame that `<video>` shows now, drawn by the frame's content script
- *                     (no request, no decoding);
+ *                     (no request, no decoding); tried before the poster once the video has
+ *                     played (1.2.4): the poster no longer shows, and the frame costs no request;
  * 3. `file-frame`:    a frame at about 10% of an MP4 / WebM file, made in the offscreen document
  *                     (only when the server takes byte ranges, else Chrome reads the whole file);
  *    `segment-frame`: a frame from the init segment and one fMP4 / CMAF segment of an HLS / DASH
@@ -133,12 +134,14 @@ function declaredPicture(meta: FrameMetadata, title: string | undefined, videosO
 export function previewSources({ stream, frame, top, videosOnPage }: PreviewFacts): PreviewSource[] {
   const sources: PreviewSource[] = [];
   const playing = playingVideo(stream, frame, videosOnPage);
-  if (playing?.video.poster !== undefined) sources.push({ kind: 'poster', url: playing.video.poster });
+  const poster: PreviewSource | undefined = playing?.video.poster === undefined ? undefined : { kind: 'poster', url: playing.video.poster };
+  let player: PreviewSource | undefined;
   if (playing?.video.hasPicture === true && !isProtected(stream)) {
-    const player: PreviewSource = { kind: 'player', frameId: stream.frameId, index: playing.index };
+    player = { kind: 'player', frameId: stream.frameId, index: playing.index };
     if (playing.video.src !== undefined) player.src = playing.video.src;
-    sources.push(player);
   }
+  const firstPlayer = playing?.video.played === true;
+  for (const source of firstPlayer ? [player, poster] : [poster, player]) if (source) sources.push(source);
   const made = madeFrame(stream);
   if (made) sources.push(made);
   // The embedded player's own document first: it is about this video; then the page around it.

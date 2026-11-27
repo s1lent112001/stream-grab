@@ -72,6 +72,20 @@ describe('previewSources', () => {
     ]);
   });
 
+  it('puts the frame of a played video before its poster', () => {
+    const meta = frame({ videos: [{ poster: 'https://site.example/poster.jpg', hasPicture: true, played: true }] });
+    expect(previewSources({ stream: hls(), frame: meta, top: meta, videosOnPage: 1 })).toEqual([
+      { kind: 'player', frameId: 0, index: 0 },
+      { kind: 'poster', url: 'https://site.example/poster.jpg' },
+      { kind: 'segment-frame' },
+    ]);
+    // Played but showing nothing now (ended, reloading): the poster alone.
+    const blank = frame({ videos: [{ poster: 'https://site.example/poster.jpg', played: true }] });
+    expect(previewSources({ stream: hls({ status: 'pending' }), frame: blank, top: blank, videosOnPage: 1 })).toEqual([
+      { kind: 'poster', url: 'https://site.example/poster.jpg' },
+    ]);
+  });
+
   it('passes the player’s src so the content script can find the element again', () => {
     const meta = frame({ videos: [{ src: 'https://cdn.example/clip.mp4', hasPicture: true }] });
     expect(previewSources({ stream: file({ frameId: 3 }), frame: meta, top: null, videosOnPage: 1 })).toEqual([

@@ -62,6 +62,10 @@ export async function hasOffscreenDocument(): Promise<boolean> {
 
 /** Creates the offscreen document unless it already exists. Safe to call concurrently. */
 export async function ensureOffscreenDocument(): Promise<void> {
+  if (creating) {
+    await creating;
+    return;
+  }
   if (await hasOffscreenDocument()) return;
   creating ??= chrome.offscreen
     .createDocument({
@@ -69,6 +73,11 @@ export async function ensureOffscreenDocument(): Promise<void> {
       reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.BLOBS],
       justification:
         'Downloads stream segments and merges them with FFmpeg.wasm in a Web Worker, then saves the result; draws small video previews.',
+    })
+    .catch(async (error: unknown) => {
+      // Another caller's check ran before this creation and its own creation won ("only a single
+      // offscreen document may be created"): the document exists, which is all that was asked.
+      if (!(await hasOffscreenDocument())) throw error;
     })
     .finally(() => {
       creating = undefined;
@@ -78,7 +87,11 @@ export async function ensureOffscreenDocument(): Promise<void> {
 
 /** Closes the offscreen document when no work is left, freeing its memory (not while previews use it). */
 export async function closeOffscreenDocument(): Promise<void> {
-  if (holds > 0) return;
   // Checked again after the await: a preview may have taken a hold meanwhile.
-  if ((await hasOffscreenDocument()) && holds === 0) await chrome.offscreen.closeDocument();
+  if (holds === 0 && (await hasOffscreenDocument()) && holds === 0) {
+    await chrome.offscreen.closeDocument();
+    return;
+  }
+  // Asked to close under a preview: the last release asks again (the document closes if still idle).
+  if (holds > 0) usedByPreviews = true;
 }

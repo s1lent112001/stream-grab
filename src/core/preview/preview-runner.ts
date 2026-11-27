@@ -1,5 +1,6 @@
 import type { DetectedStream } from '@/core/models/detected-stream';
 import type { FrameMetadata, PlayerFrameRequest } from '@/shared/types/page-metadata';
+import type { Limiter } from '@/shared/utils/concurrency';
 import { needsPreview, type PreviewCache, type PreviewRecord } from './preview-cache';
 import { parsePlayerFrame, parsePreviewDataUrl, type PreviewImage } from './preview-image';
 import type { PreviewJob, PreviewMakeResult } from './preview-job';
@@ -14,7 +15,23 @@ import { previewSources, type PreviewSource, type PreviewSourceKind } from './pr
  * A source that timed out, or a player that has no picture at this moment, is
  * not recorded as tried: it is tried again on a later popup open. An attempt
  * cancelled because the popup closed caches nothing.
+ *
+ * Each attempt waits for a slot in its lane (1.2.4): the cheap lane (player
+ * frame, poster, page picture) and the heavy lane (file and segment frames, up
+ * to 8 s each) are separate, so slow frames never hold back cheap tiles.
  */
+
+/** Slots shared by every preview of the service worker. */
+export interface PreviewLanes {
+  /** Player frames, posters, page pictures: one small request or none. */
+  cheap: Limiter;
+  /** Frames decoded from the file or its segments in the offscreen document. */
+  heavy: Limiter;
+}
+
+export function laneOf(kind: PreviewSourceKind): keyof PreviewLanes {
+  return kind === 'file-frame' || kind === 'segment-frame' ? 'heavy' : 'cheap';
+}
 
 /** `ready`: the cache holds the stream's picture; `none`: the tile keeps its icon. */
 export type PreviewOutcome = 'ready' | 'none';
@@ -29,8 +46,11 @@ export interface PreviewRunnerDeps {
   videosOnPage(tabId: number): Promise<number>;
   /** The raw answer of the frame's content script to `content/getPlayerFrame`. */
   playerFrame(tabId: number, frameId: number, request: PlayerFrameRequest): Promise<unknown>;
+  lanes: PreviewLanes;
   /** Runs one job in the offscreen document; resolves `cancelled` once `signal` aborts. */
   make(stream: DetectedStream, job: PreviewJob, signal: AbortSignal): Promise<PreviewMakeResult>;
+  /** Starts creating the offscreen document a later source will need, while earlier ones are tried. */
+  warm?(): void;
   now(): number;
 }
 
@@ -60,16 +80,22 @@ export class PreviewRunner {
       stream.frameId === 0 ? Promise.resolve(null) : deps.frameMetadata(stream.tabId, 0),
       deps.videosOnPage(stream.tabId),
     ]);
+    // The popup may have closed while the page answered (up to 2 s).
+    if (signal.aborted) return 'none';
     const sources = previewSources({ stream, frame, top: stream.frameId === 0 ? frame : top, videosOnPage });
     if (!needsPreview(cached, sources)) return 'none';
 
     // Kinds that failed before are not tried again; a new kind on offer is why this runs.
     const tried = new Set<PreviewSourceKind>(cached?.status === 'failed' ? cached.tried : []);
     const before = tried.size;
+    // Everything but the player frame is made in the offscreen document: create it alongside.
+    if (sources.some((source) => source.kind !== 'player' && !tried.has(source.kind))) deps.warm?.();
     for (const source of sources) {
       if (tried.has(source.kind)) continue;
       if (signal.aborted) return 'none';
-      const attempt = await this.#attempt(stream, source, signal);
+      const attempt = await deps.lanes[laneOf(source.kind)](() =>
+        signal.aborted ? Promise.resolve<Attempt>({ failure: 'cancelled' }) : this.#attempt(stream, source, signal),
+      );
       if ('image' in attempt) {
         await deps.cache.put({
           key: stream.id,

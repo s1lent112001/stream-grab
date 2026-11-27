@@ -391,6 +391,10 @@ Phases (one session each, measured before and after):
    cookies unless `credentials: 'omit'`; `playing` misses shadow-root videos and fires in hidden
    tabs.
 2. **Idea 3** (lanes, warm offscreen document, order), unit tests, e2e, measure.
+   **Done 2026-11-27** (ARCHITECTURE "Popup lanes"): cheap lane 4, heavy lane 2, per attempt; the
+   offscreen document created alongside the player frame; the player frame first for a video
+   that has played. A playing video with a poster 302 → 88 ms; a poster tile beside two slow
+   streams 4.1 s → 0.3 s; a quick HLS frame beside two slow ones still waits for the heavy lane.
 3. **Idea 2** (background pictures in the service worker, caps, no rule), PRIVACY.md, e2e, measure.
 4. **Idea 1** (capture on play, matching and holding), e2e for an SPA, an iframe player, an ad
    slot and a page of autoplay previews (the cap), measure.

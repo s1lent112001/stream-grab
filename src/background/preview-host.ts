@@ -3,21 +3,20 @@ import type { PreviewCache } from '@/core/preview/preview-cache';
 import { PREVIEW_FRAME_TIMEOUT_MS, type PreviewJob, type PreviewMakeResult, parsePreviewMakeResult } from '@/core/preview/preview-job';
 import { PreviewRunner, type PreviewRunnerDeps } from '@/core/preview/preview-runner';
 import { PREVIEW_PORT, parsePreviewPortRequest, type PreviewPortRequest, type PreviewPortResponse } from '@/shared/messaging/protocol';
-import type { Limiter } from '@/shared/utils/concurrency';
 import { errorMessage } from '@/shared/utils/errors';
 import type { Logger } from '@/shared/utils/logger';
 import type { ReleaseContext } from './request-context';
 
 /**
- * The service worker's side of previews (1.2.0): a port per open popup, at
- * most two previews at a time, cancelled when the popup closes; the offscreen
- * document kept open while it makes them; and the short header-rule leases its
+ * The service worker's side of previews (1.2.0): a port per open popup, its
+ * previews made in the runner's lanes (1.2.4) and cancelled when the popup
+ * closes; the offscreen document kept open while it makes them (and created
+ * early when a preview will need it); and the short header-rule leases its
  * preview maker asks for.
  */
 
-export interface PreviewHostDeps extends Omit<PreviewRunnerDeps, 'make'> {
+export interface PreviewHostDeps extends Omit<PreviewRunnerDeps, 'make' | 'warm'> {
   cache: PreviewCache;
-  limit: Limiter;
   /** Installs the context's header rule for `url`'s host (may wait for another context's rule to go). */
   acquireContext(url: string, context: RequestContext): Promise<ReleaseContext>;
   /** Keeps the offscreen document open (once created) for a whole preview; the returned function lets it go. */
@@ -41,13 +40,22 @@ export class PreviewHost {
   readonly #runner: PreviewRunner;
   /** Preview id → the context its requests carry (while the attempt runs). */
   readonly #contexts = new Map<string, RequestContext>();
+  /** `tabId:frameId` → the metadata being asked of that frame: tiles of one page share one question. */
+  readonly #asking = new Map<string, ReturnType<PreviewHostDeps['frameMetadata']>>();
   /** Lease id → its preview and release. */
   readonly #leases = new Map<string, { previewId: string; release: ReleaseContext }>();
   #nextId = 1;
 
   constructor(deps: PreviewHostDeps) {
     this.#deps = deps;
-    this.#runner = new PreviewRunner({ ...deps, make: (stream, job, signal) => this.#make(stream, job, signal) });
+    this.#runner = new PreviewRunner({
+      ...deps,
+      frameMetadata: (tabId, frameId) => this.#frameMetadata(tabId, frameId),
+      make: (stream, job, signal) => this.#make(stream, job, signal),
+      warm: () => {
+        this.#warm();
+      },
+    });
   }
 
   /** Answers a popup's port (registered synchronously at startup with chrome.runtime.onConnect). */
@@ -66,7 +74,7 @@ export class PreviewHost {
     const make = async (request: PreviewPortRequest): Promise<'ready' | 'none'> => {
       for (;;) {
         again.delete(request.streamId);
-        const outcome = await this.#deps.limit(() => this.#run(request, controller.signal));
+        const outcome = await this.#run(request, controller.signal);
         if (outcome === 'ready' || !again.has(request.streamId) || controller.signal.aborted) return outcome;
       }
     };
@@ -91,6 +99,22 @@ export class PreviewHost {
         }
       });
     });
+  }
+
+  /**
+   * A frame's metadata, asked once for every tile that needs it at the same time: a popup scrolled
+   * through a long list would otherwise queue dozens of questions on the page's main thread.
+   */
+  #frameMetadata(tabId: number, frameId: number): ReturnType<PreviewHostDeps['frameMetadata']> {
+    const key = `${tabId}:${frameId}`;
+    let answer = this.#asking.get(key);
+    if (!answer) {
+      answer = this.#deps.frameMetadata(tabId, frameId).finally(() => {
+        this.#asking.delete(key);
+      });
+      this.#asking.set(key, answer);
+    }
+    return answer;
   }
 
   /** One run of the runner, holding the offscreen document so it is not closed between two attempts. */
@@ -166,6 +190,20 @@ export class PreviewHost {
         await lease.release().catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * Creates the offscreen document while the runner tries the player frame. Held until it exists,
+   * so a preview that ended meanwhile still lets it be closed once idle.
+   */
+  #warm(): void {
+    const release = this.#deps.holdOffscreen();
+    void this.#deps
+      .ensureOffscreen()
+      .catch((error: unknown) => {
+        this.#deps.logger?.warn('Could not create the offscreen document for previews', { error: errorMessage(error) });
+      })
+      .finally(release);
   }
 
   #prune(): void {

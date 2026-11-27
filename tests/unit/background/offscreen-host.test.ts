@@ -57,10 +57,47 @@ describe('offscreen document holds', () => {
 
   it('does not close a document held while it was checking whether one exists', async () => {
     const host = await import('@/background/offscreen-host');
+    const released = vi.fn();
+    host.onOffscreenReleased(released);
     const closing = host.closeOffscreenDocument();
     const release = host.holdOffscreenDocument();
     await closing;
     expect(closeDocument).not.toHaveBeenCalled();
     release();
+    // The close it skipped is asked again (1.2.4).
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again for a close skipped under a preview that never used the document (1.2.4)', async () => {
+    const host = await import('@/background/offscreen-host');
+    const released = vi.fn();
+    host.onOffscreenReleased(released);
+    const release = host.holdOffscreenDocument();
+    await host.closeOffscreenDocument();
+    expect(closeDocument).not.toHaveBeenCalled();
+    release();
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('creating the offscreen document', () => {
+  it('creates it once for callers that ask at the same time', async () => {
+    open = false;
+    const host = await import('@/background/offscreen-host');
+    await Promise.all([host.ensureOffscreenDocument(), host.ensureOffscreenDocument(), host.ensureOffscreenDocument()]);
+    expect(createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes a creation refused because another one won as done', async () => {
+    open = false;
+    const host = await import('@/background/offscreen-host');
+    createDocument.mockImplementationOnce(() => {
+      open = true; // another caller's document
+      return Promise.reject(new Error('Only a single offscreen document may be created.'));
+    });
+    await expect(host.ensureOffscreenDocument()).resolves.toBeUndefined();
+    createDocument.mockImplementationOnce(() => Promise.reject(new Error('broken')));
+    open = false;
+    await expect(host.ensureOffscreenDocument()).rejects.toThrow('broken');
   });
 });

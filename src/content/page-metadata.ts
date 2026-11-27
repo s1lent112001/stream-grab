@@ -105,6 +105,7 @@ export function describeVideoElement(doc: Document, video: HTMLVideoElement): Vi
   const poster = boundedHttpUrl(video.getAttribute('poster'), METADATA_LIMITS.maxPictureUrlLength, base);
   if (poster !== undefined) info.poster = poster;
   if (hasPicture(video)) info.hasPicture = true;
+  if (video.played.length > 0) info.played = true;
   return info;
 }
 

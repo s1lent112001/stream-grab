@@ -93,6 +93,14 @@ describe('collectFrameMetadata', () => {
     expect(collectFrameMetadata(document, window).videos[0]?.hasPicture).toBe(true);
   });
 
+  it('reports a video that has played some of itself (1.2.4)', () => {
+    document.body.innerHTML = '<video></video>';
+    const video = document.querySelector('video')!;
+    expect(collectFrameMetadata(document, window).videos[0]?.played).toBeUndefined();
+    Object.defineProperty(video, 'played', { value: { length: 1 } });
+    expect(collectFrameMetadata(document, window).videos[0]?.played).toBe(true);
+  });
+
   it('omits empty fields', () => {
     const metadata = collectFrameMetadata(document, window);
     expect(metadata.documentTitle).toBeUndefined();
@@ -123,7 +131,8 @@ describe('parseFrameMetadata picture fields (1.2.0)', () => {
       url: 'https://site.example/',
       videos: [
         { src: 'blob:https://site.example/1', sources: ['https://a.example/v.mp4', 'data:video/mp4,', 7], poster: long, hasPicture: 'yes' },
-        { poster: 'https://cdn.example/p.webp', hasPicture: true },
+        { poster: 'https://cdn.example/p.webp', hasPicture: true, played: true },
+        { played: 'yes' },
       ],
       videoObjects: [{ name: 'A', thumbnailUrl: 'ftp://cdn.example/a.jpg' }, 'x', { thumbnailUrl: 'https://cdn.example/b.jpg' }],
       ogType: 42,
@@ -131,7 +140,8 @@ describe('parseFrameMetadata picture fields (1.2.0)', () => {
     });
     expect(parsed?.videos).toEqual([
       { sources: ['https://a.example/v.mp4'] },
-      { poster: 'https://cdn.example/p.webp', hasPicture: true },
+      { poster: 'https://cdn.example/p.webp', hasPicture: true, played: true },
+      {},
     ]);
     expect(parsed?.videoObjects).toEqual([{ name: 'A' }, { thumbnailUrl: 'https://cdn.example/b.jpg' }]);
     expect(parsed?.ogType).toBeUndefined();
